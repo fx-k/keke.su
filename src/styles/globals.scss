@@ -1,6 +1,7 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+@import 'katex/dist/katex.css';
 
 @layer components {
   .prose-container {
