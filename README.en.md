@@ -40,7 +40,12 @@ Let's start:
    ```
 5. To use the comment service, deploy the Artalk comment service. Refer to the official [guide](https://artalk.js.org/guide/deploy.html). Then, modify the `artalkServer` field in the `site.config.js` file to point to your deployed server.
 6. To automatically fetch and display friend link icons, deploy an API to fetch website favicons. Then, modify the `getFaviconAPI` field in the `site.config.js` file to point to your deployed server.
-7. Run `npm run dev` to preview the website.
+7. In order to implement website statistics service, you need to deploy the **Umami** service by yourself. Then, in the `.env` file, add the following information:
+   ```bash
+   NEXT_PUBLIC_ANALYTICS_SRC = your_own_info
+   NEXT_PUBLIC_ANALYTICS_ID = your_own_info
+   ```
+8. Run `npm run dev` to preview the website.
 
 ### Deploy to Vercel or Other Workflows
 

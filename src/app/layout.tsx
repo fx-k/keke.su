@@ -17,6 +17,7 @@ import { getSiteUrl } from '@/common/url'
 import { Inter } from 'next/font/google'
 import { SpeedInsights } from '@vercel/speed-insights/next'
 import { ThemeProvider } from 'next-themes'
+import Script from 'next/script'
 
 const inter = Inter({
   subsets: ['latin'],
@@ -58,6 +59,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               "url": config.siteUrl
             })
           }}
+        />
+        <Script
+          defer
+          src={process.env.NEXT_PUBLIC_ANALYTICS_SRC}
+          data-website-id={process.env.NEXT_PUBLIC_ANALYTICS_ID}
         />
       </head>
       <body>

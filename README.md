@@ -41,7 +41,12 @@
    ```
 5. 为了使用评论服务，你需要部署Artalk评论服务，具体部署请参考官方的[guide](https://artalk.js.org/guide/deploy.html)。然后，在 `site.config.js` 文件中修改 `artalkServer` 字段，改成你自己部署的服务器后端。
 6. 为了实现友链图标的自动获取与展示，你需要自行部署一个**获取网站favcoin**的API。然后，在 `site.config.js` 文件中修改 `getFaviconAPI` 字段，改成你自己部署的服务器后端。
-7. 运行 `npm run dev` 即可预览网站效果。
+7. 为了实现网站统计服务，你需要自行部署**Umami**服务。然后， `.env` 文件，加入以下信息：
+   ```bash
+   NEXT_PUBLIC_ANALYTICS_SRC = 填入自己的信息
+   NEXT_PUBLIC_ANALYTICS_ID = 填入自己的信息
+   ```
+8. 运行 `npm run dev` 即可预览网站效果。
 
 ### 部署到Vercel等工作流
 
