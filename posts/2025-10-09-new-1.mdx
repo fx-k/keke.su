@@ -1,0 +1,138 @@
+---
+title: 记一次MT Photos数据恢复流程（含PostgreSQL处理脚本）
+date: 2025-10-09T16:00:05Z
+tags:
+  - 技术向
+updatedOn: 2025-10-11T16:36:26Z
+image: https://oss.keke.su/image/2025/10/ac4d8c418398626ecdc93899d821ce8d.png
+draft: false
+
+FilePath: /keke.su/posts/2025-10-09-new-1.mdx
+Author: fx-k admin@fxit.top
+LastEditors: fx-k admin@fxit.top
+---
+
+## 前言
+
+MT Photos确实是一套好用的系统，比大多数NAS自带的相册强，一次付费永久使用（官方看到请结广告费hhh）。
+
+但很悲催的事情，前段时间，博主用来存照片的硬盘直接挂掉了。虽然照片还有其他备份，但整理分类过的数据可都没了。
+
+不得不说，事教人一次就会hhh
+
+博主这次给NAS上了双RAID1方案，Docker数据、相片等文件数据分别用两块SSD、HDD做了RAID1。当然，RAID从来就只是实现高可用的手段，而不是数据备份的手段，因此，博主还打算严格遵循3-2-1备份原则（三份数据，两种介质，一个异地）。
+
+但，在此之前，博主还是想尽力挽救已经分好类的数据，试图从MT Photos中的数据库中，读取到相册分类的文件数据，从而根据这些文件数据在各个零散的角落中找出这些照片重新归类。最终，结果也是成功了，花了很大精力归类的数据基本上完好无损，因此记录下本次数据恢复记录，供自己和有需要的人参考。
+
+是的，今天就是干这件事情，那我们开始吧！
+
+## 数据库
+
+MT Photos采用的是PostgreSQL的数据库。由于本次，博主要把Windows服务器上的MT Photos迁移到新NAS系统的Debian Docker上，所以本次教程的场景是**MT Photos Windows端-->Linux Docker端**。
+
+第一步，也是最重要的一步，就是将MT Photos的数据库导出得到sql文件。
+
+最好也是最便捷的办法，是直接使用WEB端的数据库导出功能来得到sql文件。
+
+但，博主NAS已经重装了，好险有系统盘备份，所以我们采用另外一种方法来拿到sql文件：
+
+根据官方文档，Windows端的数据库文件保存在`%AppData%\mt-photos-server\pgsql`目录下，将该目录复制一份出来。
+
+查看`%AppData%\mt-photos-server\pgsql\PG_VERSION`，我们看到版本是14。
+
+然后修改，pgsql目录下的`pg_hba.conf`文件夹，在最开头加上`     host    all    all    127.0.0.1/32    trust`，代表我们允许本机上任何用户，不需要密码，直接访问任何数据库。
+
+由于是Windows端的PostgreSQL，我们使用一台Windows电脑，去PostgreSQL官方下载服务端`postgresql-14.19-1-windows-x64-binaries.zip`。
+
+解压，使用下述命令将pgsql目录载入数据库，并运行起数据库服务器：
+
+```shell
+C:\Users\FXIT\Downloads\mtphotos\mtphotos\MT Photos Server\resources\app\extra\postgresql\pgsql\bin>postgres.exe -D "C:\Users\FXIT\Downloads\tmpforvmmount\mt-photos-server\pgsql"
+2025-10-01 16:33:22.621 CST [31016] LOG:  starting PostgreSQL 14.7, compiled by Visual C++ build 1914, 64-bit
+2025-10-01 16:33:22.630 CST [31016] LOG:  listening on IPv6 address "::1", port 28032
+2025-10-01 16:33:22.630 CST [31016] LOG:  listening on IPv4 address "127.0.0.1", port 28032
+2025-10-01 16:33:22.703 CST [36736] LOG:  database system was shut down at 2025-10-01 16:28:58 CST
+2025-10-01 16:33:22.917 CST [31016] LOG:  database system is ready to accept connections
+```
+
+接着，使用客户端工具，连接到这个数据库，发现已经可以正常看到数据库内容，并将数据库完整导出：
+
+```shell
+PS C:\Users\FXIT\Downloads\postgresql-14.19-1-windows-x64-binaries\pgsql\bin> ./psql.exe -h 127.0.0.1 -p 28032 -U postgres -d postgres -c "\l"
+                                 数据库列表
+   名称    |  拥有者  | 字元编码 | 校对规则 | Ctype |       存取权限
+-----------+----------+----------+----------+-------+-----------------------
+ postgres  | postgres | UTF8     | C        | C     |
+ template0 | postgres | UTF8     | C        | C     | =c/postgres          +
+           |          |          |          |       | postgres=CTc/postgres
+ template1 | postgres | UTF8     | C        | C     | =c/postgres          +
+           |          |          |          |       | postgres=CTc/postgres
+(3 行记录)
+PS C:\Users\FXIT\Downloads\postgresql-14.19-1-windows-x64-binaries\pgsql\bin> .\pg_dump.exe -c -h 127.0.0.1 -U postgres -p 28032 -d postgres -f  "C:\Users\FXIT\Downloads\tmpforvmmount\mtphotos_backup-newnew.sql"
+PS C:\Users\FXIT\Downloads\postgresql-14.19-1-windows-x64-binaries\pgsql\bin>
+```
+
+这个时候，我们已经可以将导出的sql依照官方文档导入到新服务器上。
+
+## 数据预备
+
+但，如果你也有跟博主一样的需求，即：“需要从数据库的文件列表中，批量从不同的磁盘搜索定位到原文件，并重新维护恢复为原数据目录结构”，则需要继续往下走。
+
+我们可以下载Navicat（或者你也可以用LLM帮你写个脚本从sql导出，不过博主省事直接用Navicat），然后连接到刚刚我们搭建起来的PostgreSQL服务器。
+
+选择file表，因为这个表是保存了我们所有的文件信息，右键--导出向导--JSON文件--设定你要导出json的保存位置--一直下一步--ok。
+
+![](https://oss.keke.su/image/2025/10/7802d95f02a73d4876c29722779c4921.png)
+
+此时，我们得到了一个sql和一个json，至此，数据预备完毕。
+
+## 数据恢复
+
+下载博主写的工具包：https://github.com/fx-k/mt-photos-recovery-toolkit
+
+主要大思路分为三步：建索引-找文件-改SQL
+
+### 建立索引
+
+使用`python3 build_index.py /disk1 ./disk1-index.json`，可以为disk1目录建立索引。disk1可以是各种可能还存有照片副本的地方，比如你的U盘、移动硬盘...
+
+可以同时并行执行，为不同的地方建立索引，得到json文件。
+
+### 恢复文件
+
+执行`python3 recover_files.py file.json disk1.json ./target`，脚本会试图在disk1索引中找到文件名相同的文件，然后校验MD5，如果一直，则认为找到文件，然后根据数据表的原有文件结构在复制到target文件夹下对应的文件夹中，并更新file.json。
+
+建议尽可能地从多个源（索引）试图查找文件，如果最后还是发现漏了一些文件没找到，也有可能是文件在服务端被做了修改。这个时候，是由于MD5不一致导致的文件没有找到，所以可以尝试使用`--no-md5`选择，进行剩余文件的兜底。**但是，请注意，如果你没有100%确信文件名可以定位到唯一的文件，不要试图关闭MD5校验！**
+
+### 分析查缺
+
+一轮恢复跑完，通常还会有一部分文件没找到。可以用下面的命令统计：`python3 check_unfound_files.py file.json`。
+
+### 二次校验
+
+这一步非常关键，它其实是整个数据恢复流程的“验收”过程。
+
+执行`python3 verify_recovery.py file.json`，脚本会重新二次校验MD5。如果你前面开启了`--no-md5`，这个时候会得到新的MD5，用于后续在SQL中更新MD5信息。
+
+### 更新SQL
+
+这个时候到了收尾阶段，即：把新恢复好的文件路径写回PostgreSQL的备份SQL文件里，必要时顺带修正MD5。
+
+执行`python3 update_sql_backup.py file.json mtphotos_backup.sql mtphotos_backup_updated.sql`，得到新的sql。
+
+在这个过程中，它会识别public.file、public.folder、public.album_link三张表：
+- 文件路径按文件匹配更新。
+- 文件夹路径用“最长前缀匹配”批量替换。
+- album_link表内嵌JSON的label路径也会同步更新。
+
+然后将新的sql恢复到新的MT Photos服务端中，即可。
+
+再次检查恢复的文件是否重新映射到Docker中，重启服务端，检查MT Photos WEB端情况，这个时候应该可以已经正常使用。
+
+## 总结
+
+整个恢复过程花了博主整整两三天时间。期间踩了不少坑，比如路径分隔符、SQL替换不完整等等。
+
+最终看到所有相册重新在新NAS上出现时，有种“劫后余生”的感觉。
+
+果然事教人，一次就会，数据备份还是相当相当重要的事情。数据无价，一定要多备份！
