@@ -1,0 +1,49 @@
+---
+title: 简单使用UTM在macOS上安装macOS虚拟机
+date: 2025-10-23T14:34:41Z
+tags:
+  - 技术向
+updatedOn: 2025-10-25T15:10:38Z
+image: https://oss.keke.su/image/2025/10/5378a23a61104d923fe93fa8d831f543.png
+draft: false
+
+FilePath: /keke.su/posts/2025-10-23-new-1.mdx
+Author: fx-k admin@fxit.top
+LastEditors: fx-k admin@fxit.top
+---
+
+## 前言
+
+突然需要一个Sonoma的虚拟机进行测试，所以找了许多办法在MacBook上安装Sonoma虚拟机。
+
+一开始使用VMware Fusion加自己提取的Sonoma镜像，无果。
+
+后面逛外网发现UTM可以很方便地就可以创建macOS虚拟机，所以特此记录下本次过程。
+
+## 安装UTM
+
+进入 https://mac.getutm.app/ 点击“Download”安装，注意不要点“Мас App Store”因为App Store里面的UTM要收费。
+
+## 下载
+
+可以在 https://ipsw.me/ 下载IPSW，博主这里选了MacBook的IPSW：https://ipsw.me/install/Mac15,12/23G93 ，点击下载即可。
+
+## 创建macOS虚拟机
+
+打开UTM，选择“创建一个新虚拟机”->“虚拟化”->“macOS 12+”->默认继续->“浏览”选择刚刚下载的ipsw->一路继续即可。
+
+然后即可开机：开机->“你要安装macOS吗”点确定->等待即可。
+
+等待macOS安装完成，即可成功运行macOS虚拟机。
+
+## 修复AppleID登录
+
+目前无法在M芯片上运行Sonoma虚拟机时使用AppleID登录。
+
+> Apple ID：由于搭载 Apple M 系列芯片的 Mac 电脑上 macOS 虚拟机的限制，目前无法在 macOS ARM 虚拟机中使用您的 Apple ID 登录。
+> 来源：https://forum.parallels.com/threads/resolved-apple-id-login-in-macos-guest-os.355059/page-3
+> 
+> 登录 AppleID：该功能适用​​于在装有 macOS 15 beta 3 及更新操作系统的 Mac 电脑上运行的 macOS 15 beta 3 及更新版本的虚拟机。 
+> 来源：https://kb.parallels.com/128867
+
+博主搜罗了一天半，没有找到合适的解决方案，遂终😵。
