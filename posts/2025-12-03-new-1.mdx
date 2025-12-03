@@ -1,0 +1,194 @@
+---
+title: EMQX + Tasmota + ESP-Relay：DIY无线夜视补光灯的自动化控制链路
+date: 2025-12-03T16:14:58Z
+tags:
+  - 技术向
+updatedOn: 2025-12-03T22:06:20Z
+image: https://oss.keke.su/image/2025/12/cb4ee7069a9e30cbc077ca6e9476e1e5.png
+draft: false
+
+FilePath: /keke.su/posts/2025-12-03-new-1.mdx
+Author: fx-k admin@fxit.top
+LastEditors: fx-k admin@fxit.top
+---
+
+## 前言
+
+自从给小米的摄像头刷上DIY固件后，摄像头也有了MQTT上报功能，还能通过驱动usb网卡来实现有线的稳定网络连接（本来打算水一期这个的但是感觉没必要hhh）。
+
+但有个问题，摄像头放在玻璃后面，当夜间的红外补光灯开启时，会由于玻璃的反射导致摄像头啥也拍不清楚...于是博主直接ban掉了夜视补光灯的功能。
+
+当然，没有红外补光灯的话，晚上摄像头照样也是拍不清晰的。所以，手上刚好有多余的ESP01S、ESP-01S Relay继电器，再买个红外灯，通过MQTT联动的方案，理论上可以很快速搭建起一套DIY的无线夜视补光灯的自动化联动控制链路。
+
+那么，开始吧！
+
+## 准备
+
+博主在本次使用了如下物料：
+
+硬件类：
+
+- ESP-01S
+
+- [ESP-01S Relay v4.0继电器](https://github.com/IOT-MCU/ESP-01S-Relay-v4.0/blob/master/ESP-01S%20Relay%20v4.0.pdf)
+
+- 25V 470μF电容
+
+- 5V 红外补光灯
+
+- usb烧录器及若干线材、焊锡、电烙铁等
+
+软件类：
+
+- macOS (Apple silicon M3)
+
+- EMQX 社区版 (Docker)
+
+- MQTTX macOS客户端
+
+## 架构总览
+
+先来一张总体原理图，架构还是比较简单易懂的。
+
+![](https://oss.keke.su/image/2025/12/3eb17a06594fd9003318d75e34d598e7.png)
+
+## 搭建EMQX
+
+博主直接在NAS上搭建了，下面给出`docker-compose.yaml`。
+
+```yaml
+services:
+    emqx-enterprise:
+        container_name: emqx
+        ports:
+            - 1883:1883
+            - 8083:8083
+            - 8084:8084
+            - 8883:8883
+            - 18083:18083
+        image: emqx/emqx-enterprise:6.0.1
+        volumes:
+            - ./data:/opt/emqx/data
+            - ./log:/opt/emqx/log
+        hostname: node1.nas.keke.su
+        environment:
+            - EMQX_NODE_NAME=emqx@node1.nas.keke.su
+        restart: always
+        logging:
+          driver: "json-file"
+          options:
+            max-size: "100m"
+            max-file: "3"
+```
+
+其中`node1.nas.keke.su`可替换为你自定义喜欢的主机名，用于存储唯一标识，后续不建议更改。
+
+端口方面，`18083`是EMQX的Web控制台，由于在内网，我们直接用未加密`1883`的TCP端口来进行MQTT连接（顺带一提，ESP8266不支持MQTT over SSL/TLS）。
+
+然后`docker-compose up -d`即可。
+
+进入Web控制台，完成安装引导后，在“客户端认证”栏，创建“内置数据库”，然后进入“用户管理”，为摄像头和ESP继电器创建两个账户，再为自己调试创建一个超级用户。
+
+![](https://oss.keke.su/image/2025/12/6752808d82501bea18bccde984756a7f.png)
+
+## 刷入Tasmota固件
+
+这一步是为了给我们的ESP-01S刷入Tasmota固件。
+
+Tasmota是一个很方便的固件（尤其是接入HA时），我们可以很轻松地在Web UI轻松配置我们的ESP设备，并且支持MQTT、HTTP、串口或KNX进行完全的本地控制。
+
+进入[https://ota.tasmota.com/tasmota/release/](https://ota.tasmota.com/tasmota/release/)，下载`tasmota-CN.bin.gz`中文固件。
+
+然后将usb烧录器与ESP-01S连接，3V3接3V3，TX接RX，RX接TX，下拉IO0进入烧录模式，然后通电与电脑usb端口连接，如图。
+
+![](https://oss.keke.su/image/2025/12/424acabc3c0fc2f1b526fadd4231baf7.png)
+
+然后进入[https://tasmota.github.io/install/](https://tasmota.github.io/install/)，这个官方提供的Web平台工具只需使用浏览器就可以进行固件刷入，很方便，根本不需要安装烧录工具👍。
+
+选择Tasmota CN，然后点击“CONNECT”，选择你的usb烧录器端口，然后“Erase device”-->“Install”即可。
+
+![](https://oss.keke.su/image/2025/12/0a2b6b2c6ed8e5c916fdf1b21c617de3.png)
+
+![](https://oss.keke.su/image/2025/12/df0d8409400bb359093d2f3b48b42850.png)
+
+然后，解除（拔掉）IO0的接地，重新接电，可以在控制台日志中看到Tasmota已经正常运行：
+
+![](https://oss.keke.su/image/2025/12/33fbefbe229a515af9592f20193efbfd.png)
+
+此时，将ESP-01S安装在ESP-01S继电器上，此步骤完成。
+
+## 配置固件
+
+### 摄像头上报
+
+本文不详细讲述摄像头的MQTT上报。
+
+在摄像头中配置好MQTT的ip、端口（1883）、刚刚为摄像头创建的用户和密码，以及Topic（这里假设是`HT_ke_room/Camera`）即可。
+
+### Tasmota配置
+
+将连接好ESP-01S的继电器接入5V，手机可以搜索到tasmota-开头的wifi。
+
+连接wifi，进入`192.168.4.1`的web配置界面，进行wifi配置。
+
+配置完成后，我们与esp继电器即处于同一局域网内。
+
+在路由器查看给esp继电器dhcp的ip地址，进入后台。
+
+1. 进入“设置”--“MQTT设置”，配置好MQTT的ip、端口（1883）、刚刚为esp继电器创建的用户和密码，其他可以不用理会。
+
+2. 进入“设置”--“其他设置”，在“模版”勾选“启用”，参考[这个配置](https://templates.blakadder.com/ESP-01S-Relay-v4.html)，填入`{"NAME":"ESP01v4","GPIO":[256,320,0,32,0,0,0,0,0,0,0,0,0,0],"FLAG":0,"BASE":18}`。然后，“启用HTTP API”、“启用MQTT”都勾上，最后保存即可。
+
+3. 回到主菜单，点击“开/关”，此时，继电器的吸合应该可以被正常控制切换。
+
+## 配置自动化
+
+进入EMQX的Web控制台，进入“规则”--“创建”，根据你的需求创建SQL语句。
+
+博主这边是，摄像头通过MQTT上报`HT_ke_room/Camera/night_mode`Topic，值为“ON”/“OFF”来上报摄像头是否开启了夜间模式。
+
+而我们，第一步就是先使用SQL语句拿到摄像头上报的值（“ON”/“OFF”）。
+
+```sql
+SELECT payload as night_mode_status FROM "HT_ke_room/Camera/night_mode"
+```
+
+我们要实现摄像头上报“ON”，同步开启继电器。所以，我们在“动作输出”中配置“消息重发布”，配置“主题”（其中`tasmota_266C36`部分每个人可能不一样，可以在EMQX后台找到具体的Topic路径）、“Payload”为刚刚select出来的`${night_mode_status}`。
+
+![](https://oss.keke.su/image/2025/12/cb88b59587897baa4f30c1272e65f5dc.png)
+
+保存，即可。
+
+![](https://oss.keke.su/image/2025/12/33233147e90f0c9c62371d6efc877020.png)
+
+通过MQTTX客户端我们也可以观察到，EMQX规则正常运行，至此，全链路已经跑通。
+
+![](https://oss.keke.su/image/2025/12/097cbdb269e846f3729c1a460e244938.png)
+
+## 解决继电器Bug
+
+实战的小伙伴可能已经发现了，在首次给继电器通电的瞬间，继电器会发出「啪啪」两声，那是继电器快速开关的声音。
+
+<YouTube vid="8YL2OvrO4CE" />
+
+虽说继电器模组会保持通电状态，所以也只会发生在第一次接上去的时候，不过如果遇到停电复电的状况，那就不有趣了hhhh，而且这件事情对电器本身伤害也是挺大的。
+
+该如何解决呢？
+
+我们参考[GitHub的issue](https://github.com/IOT-MCU/ESP-01S-Relay-v4.0/issues/1#issuecomment-680735425)，发现已经有很多人发现这个问题并给出了五花八门的解法，包括但不限于：焊接电容法、爆改GPIO法、增加电阻法...
+
+其实这个问题是由于，ESP-01S在通电瞬间，GPIO0被短暂上拉随后又快速降至0V，导致了继电器的瞬间吸合情况。
+
+博主使用了并联电容法，焊接了一个25V 470μF电容在PC817上。原理是，电容使ESP-01S通电瞬间，电流不会经过PC817的Pin1和Pin2，而是优先走向阻抗较低的电容。
+
+根据[其他人的实验结果](https://rabbithole.wwwdotorg.org/2017/03/28/esp8266-gpio.html)，这个“瞬间”大概只有 0.1 秒。所以我们只需要把电容的充电时间设计得**比0.1秒更长**，电路就不会出现“瞬间触发”的问题。
+
+根据 RC 时间常数公式： $\tau = R \times C$，代入数值： $\tau = 470\ \Omega \times 470\ \mu F \approx 0.2\ \text{秒}$
+
+因为 0.2 秒 > 0.1 秒，所以这个RC组合足够延长充电时间，可以有效避免“瞬间开关”的情况。
+
+![](https://oss.keke.su/image/2025/12/ae26d5c2ca003330f5dfd456958ef1f4.png)
+
+## 结束
+
+至此，一个DIY的无线自动红外监控补光灯系统折腾完成。通过MQTT的订阅发布机制，我们可以很方便地根据需求，在不同的地方扩展布下多个红外补光灯，以达到最佳的摄像头夜视效果！
