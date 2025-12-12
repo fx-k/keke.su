@@ -1,0 +1,137 @@
+---
+title: 配置 Zapret 让 Cloudflare Tunnel 在特殊网络重新连通
+date: 2025-12-12T14:34:47Z
+tags:
+  - 技术向
+updatedOn: 2025-12-12T22:53:07Z
+image: https://oss.keke.su/image/2025/12/17148b07ecf4a914030c71de2135ac32.png
+draft: false
+
+FilePath: /keke.su/posts/2025-12-12-new-1.mdx
+Author: fx-k admin@fxit.top
+LastEditors: fx-k admin@fxit.top
+---
+
+> 叠甲：本文仅记录博主在某些网络环境下遇到 Cloudflare Tunnel 无法连接的问题，以及通过 Zapret 改善连通性的技术过程，不涉及任何政治或敏感内容。
+
+## 前言
+
+博主昨天下午疯狂收到一台来自欧亚地区某神秘国服务器的告警，节点上的所有服务都炸掉了。一登录进去，发现是cloudflared连不上CF节点，进而导致所有基于CF Tunnel暴露的服务都无法被外网访问了。
+
+其中，尝试更新cloudflared版本、更换为http2和quic的协议，都无法解决问题，基本确定是CF的节点被当地的IDC运营商封锁阻断了。
+
+通过万能的Google和GitHub，最终成功借助DPI Bypass解决了本次问题，所以写一篇文章记录下来。
+
+## DPI Bypass
+
+那么，什么是DPI呢？
+
+DPI（Deep Packet Inspection）深度包检测，在一些企业/ISP里会用其来识别和阻止网络攻击等恶意内容，它不仅查看数据包的“外表”，还会深入数据包的“内部”，来判定数据包是否合规。
+
+而DPI封锁，就比如说，你需要去寄一封信，DPI就是安检员，它不仅查看信封，还会拆开看信件的内容，当发现黑名单的内容时（比如CF Tunnel的连接特征），就直接把信丢碎纸机（丢包），或者给回你一张假的回信告诉你此路不通（发送RST重置连接）。
+
+而DPI Bypass，顾名思义，就是绕过DPI封锁，主要是通过将“信件”（数据包）弄得乱七八糟，从而绕过DPI这一“安检员”的合规检测黑名单，进而放行。
+
+我们本次用的Zapret就是一个专门用于实施DPI Bypass的工具箱，它本质是作用于你的主机/服务器，将数据包进行伪装，从而绕过DPI合规检测，成功放行。
+
+根据[Zapret文档](https://github.com/bol-van/zapret/blob/master/docs/readme.md)，Zapret主要用到了下面几种技术：
+
+- 切碎信件（TCP Split）
+
+  - 比如，将`Host: keke.su`拆为`Host: ke`和`ke.su`，让DPI无法命中黑名单规则
+
+- 乱序发送（Disorder）
+
+  - 比如，先发`ke.su`再发`Host: ke`
+
+- 扔烟雾弹（Fake Packets）
+
+  - 比如，在发真信之前发一封假信，以伪造正在访问合规的内容
+
+- 改写格式（Header Modification）
+
+  - 比如，通过混淆大小写来修改信件的地址，试图让DPI无法识别原始意图
+
+了解完基本原理后，我们可以开始尝试使用Zapret来解决CF Tunnel的阻断问题。
+
+## 安装Zapret
+
+首先，下载Zapret程序包：
+
+`wget -O - https://github.com/bol-van/zapret/releases/download/v71.4/zapret-v71.4.tar.gz | tar -zx`
+
+然后，`cd zapret-v71.4`，执行`./install_bin.sh`，脚本将自动检测合适的预编译文件，将Zapret的二进制文件链接到指定目录。
+
+接着，执行`./install_prereq.sh`，脚本会让你选择防火墙类型（iptables/nftables）以及是否使用IPv6等。博主这里选择的`iptables`，因为比较轻量，同时博主这台机器没有v6，所以不使用IPv6。
+
+等待依赖安装完成，这时，可以执行`./blockcheck.sh`，一路回车即可，脚本会自动检测合适的Bypass策略。
+
+最后，执行`./install_easy.sh`，并允许脚本复制二进制文件到`/opt/zapret`，记得选择开启`nfqws`，因为后面我们需要配置nfqws规则来解决CF Tunnel的连接问题。
+
+## 配置规则
+
+参考Cloudflare[社区贴](https://community.cloudflare.com/t/cloudflare-tunnels-inoperative-in-russia/792558/11)和GitHub的[issue](https://github.com/cloudflare/cloudflared/issues/1456)，我们首先`cd /opt/zapret/`。
+
+然后，下载这两个bin文件，得到Google的quic和tls数据包特征：
+
+```bash
+wget https://github.com/Flowseal/zapret-discord-youtube/raw/refs/heads/main/bin/quic_initial_www_google_com.bin
+wget https://github.com/Flowseal/zapret-discord-youtube/raw/refs/heads/main/bin/tls_clienthello_www_google_com.bin
+```
+
+有了数据包特征，我们接下来要告诉Zapret的NFQWS组件“如何干活”，所以，编辑规则`nano /opt/zapret/config`：
+
+```bash
+NFQWS_PORTS_TCP=80,443,7844
+NFQWS_PORTS_UDP=443,50000-50100,7844
+NFQWS_TCP_PKT_OUT=9
+NFQWS_TCP_PKT_IN=3
+NFQWS_UDP_PKT_OUT=9
+NFQWS_UDP_PKT_IN=0
+NFQWS_PORTS_TCP_KEEPALIVE=
+NFQWS_PORTS_UDP_KEEPALIVE=
+NFQWS_OPT="
+--filter-tcp=80 --dpi-desync=fake,multisplit --dpi-desync-autottl=2 --dpi-desync-fooling=md5sig --dpi-desync-split-pos=method+2 <HOSTLIST> --new
+--filter-tcp=443 --dpi-desync=fake --dpi-desync-repeats=6 --dpi-desync-fooling=md5sig --dpi-desync-fake-tls=/opt/zapret/bin/tls_clienthello_www_google_com.bin <HOSTLIST> --new
+--filter-tcp=7844 --dpi-desync=fake --dpi-desync-repeats=6 --dpi-desync-fooling=md5sig --dpi-desync-fake-tls=/opt/zapret/bin/tls_clienthello_www_google_com.bin <HOSTLIST> --new
+--filter-udp=443 --dpi-desync=fake --dpi-desync-repeats=6 --dpi-desync-fake-quic=/opt/zapret/bin/quic_initial_www_google_com.bin <IPSET> --new
+--filter-udp=50000-50100 --dpi-desync=fake --new
+--filter-udp=50000-50100 --filter-l7=discord,stun --dpi-desync=fake --new
+--filter-tcp=443 --dpi-desync=fake --dpi-desync-repeats=6 --dpi-desync-fooling=md5sig --dpi-desync-fake-tls=/opt/zapret/bin/tls_clienthello_www_google_com.bin <IPSET> --new
+--filter-udp=7844 --dpi-desync=fake --dpi-desync-repeats=12 --dpi-desync-any-protocol=1 --dpi-desync-cutoff=n3 --dpi-desync-fake-unknown-udp=/opt/zapret/bin/quic_initial_www_google_com.bin <IPSET> --new"
+```
+
+通过上述规则，Zapret将监视80/443/7844端口流量，然后只处理前9个数据包。当遇到匹配的数据包时，先连续发送Google的伪装数据包，再发送真实数据，从而绕过DPI检测。
+
+最后，我们只需要`sudo systemctl restart zapret`重启服务即可。
+
+通过`sudo systemctl status zapret`，我们可以看到处理规则已经正常应用：
+
+```bash
+root@ru-kekesu:~/zapret-v71.4# systemctl status zapret
+● zapret.service
+     Loaded: loaded (/lib/systemd/system/zapret.service; enabled; preset: enabled)
+     Active: active (running) since Fri 2025-12-12 14:30:22 CST; 8h ago
+    Process: 269265 ExecStart=/opt/zapret/init.d/sysv/zapret start (code=exited, status=0/SUCCESS)
+      Tasks: 1 (limit: 396)
+     Memory: 752.0K
+        CPU: 335ms
+     CGroup: /system.slice/zapret.service
+             └─269319 /opt/zapret/nfq/nfqws --user=tpws --dpi-desync-fwmark=0x40000000 --qnum=200 --filter-tcp=80 --dpi-desync=fake multisplit --dpi-desync-autottl=2 --dpi-de>
+
+Dec 12 14:30:21 ru-kekesu zapret[269265]: --filter-tcp=443 --dpi-desync=fake --dpi-desync-repeats=6 --dpi-desync-fooling=md5sig --dpi-desync-fake-tls=/opt/zapret/bin/tls_cl>
+Dec 12 14:30:21 ru-kekesu zapret[269265]: --filter-udp=7844 --dpi-desync=fake --dpi-desync-repeats=12 --dpi-desync-any-protocol=1 --dpi-desync-cutoff=n3 --dpi-desync-fake-u>
+Dec 12 14:30:21 ru-kekesu zapret[269265]: Applying iptables
+Dec 12 14:30:21 ru-kekesu zapret[269265]: Creating ip list table (firewall type iptables)
+Dec 12 14:30:21 ru-kekesu zapret[269325]: setting high oom kill priority
+Dec 12 14:30:21 ru-kekesu zapret[269325]: reloading ipset backend (no-update)
+Dec 12 14:30:21 ru-kekesu zapret[269265]: Inserting iptables rule for nfqws postrouting (qnum 200) : -p tcp -m multiport --dports 80,443,7844 -m connbytes --connbytes-dir=o>
+Dec 12 14:30:22 ru-kekesu zapret[269265]: Inserting iptables rule for nfqws input+forward (qnum 200) : -p tcp -m multiport --sports 80,443,7844  -m connbytes --connbytes-di>
+Dec 12 14:30:22 ru-kekesu zapret[269265]: Inserting iptables rule for nfqws postrouting (qnum 200) : -p udp -m multiport --dports 443,50000:50100,7844 -m connbytes --connby>
+Dec 12 14:30:22 ru-kekesu systemd[1]: Started zapret.service.
+lines 1-20/20 (END)
+```
+
+然后，重启Cloudflared服务，发现已经可以正常连接上CF的服务器。
+
+至此，教程结束～
