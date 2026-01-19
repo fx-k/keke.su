@@ -18,6 +18,7 @@ module.exports = {
   artalkServer: 'https://cmt.keke.su',
   links: [
     { name: 'GitHub', link: 'https://github.com/fx-k' },
+    { name: 'Moments', link: 'https://now.keke.su' },
     { name: 'Telegram', link: 'https://t.me/Mone_J' },
     { name: 'Mail', link: 'mailto:admin@fxit.top' },
     { name: 'RSS', link: '/feed.xml' },

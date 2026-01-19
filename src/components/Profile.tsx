@@ -1,7 +1,7 @@
 import React from 'react'
 import config from 'config'
 import Image from 'next/image'
-import { GitHub, Telegram, Mail, RSS } from './icons'
+import { GitHub, Telegram, Mail, RSS, Moments} from './icons'
 import { Ma_Shan_Zheng } from 'next/font/google'
 import { Typewriter } from 'nextjs-simple-typewriter'
 import { shuffle } from 'lodash';
@@ -19,6 +19,7 @@ const SOCIAL_ICONS: Record<string, React.ReactNode> = {
   'Telegram': <Telegram className="text-xl" aria-hidden />,
   'Mail': <Mail className="text-xl" aria-hidden />,
   'RSS': <RSS className="text-xl" aria-hidden />,
+  'Moments': <Moments className="text-xl" aria-hidden />,
 }
 
 const Profile = () => {
