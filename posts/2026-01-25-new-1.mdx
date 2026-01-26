@@ -1,0 +1,310 @@
+---
+title: 快速搭建&迁移S3 —— 手把手教你从MinIO迁移到Garage
+date: 2026-01-25T10:24:15Z
+tags:
+  - 技术向
+updatedOn: 2026-01-26T12:25:23Z
+image: https://oss.keke.su/image/2026/01/17e35b424db172fb7138831b213cf10d.jpg
+draft: false
+
+FilePath: /keke.su/posts/2026-01-25-new-1.mdx
+Author: fx-k admin@fxit.top
+LastEditors: fx-k admin@fxit.top
+---
+
+## 前言
+
+博主之前一直用MinIO搭建S3存储，并用作本博客的图床。
+
+兼容S3标准的对象存储用起来很方便，许多软件都可以调用S3 API方便地进行文件的上传下载和管理。因此，很多大厂也会将支持S3作为对象存储的标配。但大厂的对象存储往往定价昂高，而且又有着许多配额限制，容易超标，所以，自建S3对个人项目而言是一个不错的选择。
+
+关于搭建S3，MinIO十分方便，还拥有一个带UI的控制台。但，最近MinIO变动比较大，在许可证上进行了调整，并且目前官方GitHub已经宣布停止更新，进入维护状态（Maintenance Mode）。况且，在博主的小配置机器上，MinIO吃资源情况也比较严重。
+
+于是，博主开始寻找替代品。逛完reddit等社区，发现[Garage](https://garagehq.deuxfleurs.fr/)是一个比较不错的替代 —— 轻量、稳定、社区驱动。
+
+## 迁移纵览
+
+使用MinIO时，博主通过Nginx反向代理了9000和9001，分别用于S3和管理面板。
+
+- 9000: MinIO S3服务（即图床外链&S3 API）
+- 9001: MinIO WebUI（管理后台）
+
+而，Garage不太一样，它不支持桶策略（Bucket Policy），比如公开桶（Public Bucket），它有4个端口。
+
+- 3900: 用于S3 API（仅允许有权限的人进行文件管理）
+- 3902: 用于Web服务（真正给外部用户访问的图床外链）
+- 3901: 用于内部集群沟通的rpc端口（单机用户可忽略）
+- 3903: 用于管理Garage的admin api接口（后续用于对接第三方WebUI面板）
+
+除此之外，Garage是块存储机制，而MinIO则维持文件原本的模样。
+
+本篇文章还会用到[garage-webui](https://github.com/khairul169/garage-webui)，这是一个第三方WebUI管理面板，可以平替MinIO的管理面板。毕竟，UI还是要比敲命令更直观的hhh。
+
+- 3909: garage-webui面板（与3903、3900进行通讯）
+
+---
+
+在MinIO中，`oss.keke.su`指向了`9000`，并创建了名为`image`的public bucket，因此，访客可以通过`http://oss.keke.su/image/...`访问到图床的图片。
+
+在Garage中，`*.oss.keke.su`将绑定`3902`，当一个名为`xxx`的bucket开启了[Website Access](https://garagehq.deuxfleurs.fr/documentation/cookbook/exposing-websites/)，访客通过`http://xxx.oss.keke.su/...`或`http://xxx/...`访问到其资源。
+
+为了无缝迁移，我们将创建名为`oss.keke.su`的bucket，开启website access，并在该bucket创建`image`文件夹，因此，访客依旧可以通过`http://oss.keke.su/image/...`访问到图片。
+
+最后，我们将MinIO中`image`bucket的内容clone到Garage的`oss.keke.su`bucket的`image`目录下，即可完成迁移。
+
+## 搭建Garage
+
+Garage使用`garage.toml`作为配置文件，因此我们需要先创建`garage.toml`：
+
+```toml
+# ========================
+# 基础存储路径配置
+# ========================
+metadata_dir = "/var/lib/garage/meta" # Garage 元数据存放目录
+data_dir = "/var/lib/garage/data" # 对象数据（真正文件内容）存放目录，大文件、静态资源都在这里
+db_engine = "sqlite" # 可选：sqlite / lmdb
+metadata_auto_snapshot_interval = "6h" # 如果设置此值，Garage 将定期自动对元数据数据库文件进行快照
+
+# ========================
+# 数据可靠性与性能
+# ========================
+replication_factor = 1 # 副本数量，即一个对象会被存几份，比如：3 表示：允许同时坏 2 个节点而不丢数据
+compression_level = 1 # 数据压缩级别（0~9），比如：2：轻量压缩，CPU 开销低，性价比高
+
+# ========================
+# 集群 RPC 通信（3901）
+# ========================
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "localhost:3901" # 对外公布的 RPC 地址，单机可用 localhost，多机必须填真实 IP:3901
+rpc_secret = "用openssl rand -hex 32生成" # RPC 通信密钥，用于集群节点之间认证
+
+# ========================
+# S3 相关
+# ========================
+[s3_api]
+s3_region = "garage" # S3 区域名（随便写，但要统一）
+api_bind_addr = "[::]:3900"
+root_domain = ".s3.oss.keke.su" # S3 API 使用的域名后缀
+
+[s3_web]
+bind_addr = "[::]:3902"
+root_domain = ".oss.keke.su" # Web 访问域名后缀，<bucket>.web.domain.com
+index = "index.html" # 默认首页文件，访问 bucket 根目录时返回这个文件，常用于 Hugo / 静态站点
+
+# ========================
+# 管理接口（3903）
+# ========================
+[admin] # Required
+api_bind_addr = "[::]:3903"
+admin_token = "用openssl rand -base64 32生成" # 管理接口访问 Token，用于 garage 命令或 HTTP 管理 API，可以
+metrics_token = "用openssl rand -base64 32生成" # 指标接口 Token，用于 Prometheus / metrics 拉取
+```
+
+由于我们是单机部署，所以`replication_factor`设为`1`。为了更好地保证数据安全，我们还开启了`metadata_auto_snapshot_interval`。
+
+然后是`docker-compose.yaml`。
+
+```yaml
+services:
+  garage:
+    image: dxflrs/garage:v2.1.0
+    container_name: garage
+    volumes:
+      - ./garage_data/garage.toml:/etc/garage.toml
+      - ./garage_data/meta:/var/lib/garage/meta # 存储元数据的目录 建议ssd
+      - ./garage_data/data:/var/lib/garage/data # 存储对象数据块的目录 建议大容量硬盘
+    restart: unless-stopped
+    ports:
+      - 3900:3900 # 3900-api 是 S3 API 访问端口
+      # - 3901:3901 # 3901-rpc 是集群节点内部通信访问端口
+      - 3902:3902 # 3902-web 给外部/用户访问资源用
+      # - 3903:3903 # 3903-admin-api 用户管理的高级API
+    environment:
+      - TZ=Asia/Shanghai
+
+  webui:
+    image: khairul169/garage-webui:latest
+    container_name: garage-webui
+    restart: unless-stopped
+    volumes:
+      - ./garage_data/garage.toml:/etc/garage.toml:ro
+    ports:
+      - 3909:3909 # 第三方webui
+    environment:
+      API_BASE_URL: "http://garage:3903"
+      S3_ENDPOINT_URL: "http://garage:3900"
+      # 面板密码，使用 htpasswd -nbBC 10 "YOUR_USERNAME" "YOUR_PASSWORD" 生成
+      # 注意，由于docker-compose会将所有 $ 符号展开为内部变量，所以$要改写成$$
+      AUTH_USER_PASS: "YOUR_USERNAME:$$2y$$10$$UX/dcbFO9QGVpv9gLn1doeD5OJtJ.g6l8YkFwdpBXN2rA9m3O2sQC"
+```
+
+因为我们是单机部署，这里为了安全，阻止了`3901`、`3903`端口的暴露。
+
+然后，执行`docker-compose up -d`，服务就run起来了，搭建完成。
+
+## 初始化节点
+
+使用你设定的面板密码登录`http://服务器ip:3909`，我们成功进入了第三方WebUI面板。
+
+第一步是需要初始化节点，进入`Cluster`。因为是单机模式，我们只有一个Nodes，直接选中点击`Assign`，随便取一个`Zone`名称，并在`Capacity`设定bucket容量，最后点击`Apply`即可完成初始化。
+
+![](https://oss.keke.su/image/2026/01/d4c55dd6c34bcf64dba7c352ccc2c7c1.png)
+
+![](https://oss.keke.su/image/2026/01/2b6842a120977ee99b801306eadf4c1d.png)
+
+## 创建Key
+
+进入`Keys`，点`Create Key`新建一个`Key`，名字随便写。
+
+![](https://oss.keke.su/image/2026/01/0fe846973e2e6d1bbca0c1f5f95576f9.png)
+
+## 创建Bucket
+
+进入`Buckets`，点`Create Bucket`新建一个`Bucket`，名字根据你们自己需要来，博主这里名称为`oss.keke.su`。
+
+然后，在这个Bucket进入`Manage`->`Permissions`->`Allow Key`，为刚刚创建的Key分配所有权限（Read、Write、Owner）。
+
+最后，在`Overview`打开`Website Access`。可以看到，一切如我们所愿：我们可以通过`http://bucket名`（`oss.keke.su`），或者通过`http://<bucket名>.root_domain`（`oss.keke.su.oss.keke.su`）公开访问到这个bucket，这就是我们图床的外链链接。
+
+![](https://oss.keke.su/image/2026/01/207dba37d2a92c3ed0a8a8d7263757a4.png)
+
+## 迁移数据
+
+正如前文“[迁移纵览](#迁移纵览)”所述，为了实现无缝迁移，我们还需要借助Rclone工具，同时连接MinIO的`image`bucket和Garage的`oss.keke.su`bucket进行sync。数据流如下所示：
+
+MinIO: `<image bucket>/*` --> Garage: `<oss.keke.su bucket>/image/*`
+
+### 安装Rclone
+
+以Mac为例，可以很方便地使用`brew install rclone`安装：
+
+```bash
+(base) ke@MoneJMacBook-Air ~ % rclone version
+rclone v1.72.1
+- os/version: darwin 15.7.3 (64 bit)
+- os/kernel: 24.6.0 (arm64)
+- os/type: darwin
+- os/arch: arm64 (ARMv8 compatible)
+- go/version: go1.25.5
+- go/linking: dynamic
+- go/tags: none
+```
+
+### 创建配置
+
+我们需要创建rclone配置，来连接MinIO和Garage这两台S3。
+
+执行`nano /tmp/rclone.conf`，写入：
+
+```conf
+[minio]
+type = s3
+provider = Minio
+endpoint = https://oss.keke.su
+access_key_id = 你的Minio的AK
+secret_access_key = 你的Minio的SK
+use_ssl = true
+force_path_style = true
+
+[garage]
+type = s3
+provider = Other
+endpoint = http://你的Garage公网IP:3900
+access_key_id = 你的Garage的AK
+secret_access_key = 你的Garage的SK
+use_ssl = false
+force_path_style = true
+region = garage
+acl = private
+bucket_acl = private
+```
+
+注意根据情况自行修改`use_ssl`、`endpoint`以及`access_key_id`、`secret_access_key`。
+
+### 开始同步
+
+使用下面命令进行同步：
+
+```bash
+rclone --config /tmp/rclone.conf sync \
+  minio:image \
+  garage:oss.keke.su/image \
+  --progress \
+  --checkers 8 \
+  --transfers 4 \
+  -vv
+```
+
+看到日志，已经成功同步完成：
+
+```bash
+...
+2026/01/26 11:47:31 DEBUG : old-fxblog-img/cover/fa92823efb8732e9b61a8ba6d063ad12.jpg: size = 82062 OK
+2026/01/26 11:47:31 DEBUG : old-fxblog-img/cover/fa92823efb8732e9b61a8ba6d063ad12.jpg: md5 = fa92823efb8732e9b61a8ba6d063ad12 OK
+2026/01/26 11:47:31 INFO  : old-fxblog-img/cover/fa92823efb8732e9b61a8ba6d063ad12.jpg: Copied (new)
+2026/01/26 11:47:31 DEBUG : old-fxblog-img/cover/f6df78edea59aab75bfe20a7696fa96a.jpg: size = 45123 OK
+2026/01/26 11:47:31 DEBUG : old-fxblog-img/cover/f6df78edea59aab75bfe20a7696fa96a.jpg: md5 = f6df78edea59aab75bfe20a7696fa96a OK
+2026/01/26 11:47:31 INFO  : old-fxblog-img/cover/f6df78edea59aab75bfe20a7696fa96a.jpg: Copied (new)
+2026/01/26 11:47:31 DEBUG : old-fxblog-img/cover/fa201c807e5a54b09f1fb1ac192cc528.jpg: size = 6918 OK
+2026/01/26 11:47:31 DEBUG : old-fxblog-img/cover/fa201c807e5a54b09f1fb1ac192cc528.jpg: md5 = fa201c807e5a54b09f1fb1ac192cc528 OK
+2026/01/26 11:47:31 INFO  : old-fxblog-img/cover/fa201c807e5a54b09f1fb1ac192cc528.jpg: Copied (new)
+2026/01/26 11:47:31 DEBUG : Waiting for deletions to finish
+Transferred:   	  186.705 MiB / 186.705 MiB, 100%, 959.537 KiB/s, ETA 0s
+Checks:                 0 / 0, -, Listed 553
+Transferred:          533 / 533, 100%
+Elapsed time:      2m49.4s
+2026/01/26 11:47:31 INFO  : 
+Transferred:   	  186.705 MiB / 186.705 MiB, 100%, 959.537 KiB/s, ETA 0s
+Checks:                 0 / 0, -, Listed 553
+Transferred:          533 / 533, 100%
+Elapsed time:      2m49.4s
+
+2026/01/26 11:47:31 DEBUG : 13 go routines active
+(base) ke@MoneJMacBook-Air ~ % 
+```
+
+## 收尾工作
+
+至此，我们已经完成所有的迁移预操作。
+
+最后一步，就是将域名解析、反向代理等根据自身情况指向Garage即可。
+
+### 重定义Web服务
+
+正如前文“[迁移纵览](#迁移纵览)”所述，博主原本使用Nginx反向代理至`127.0.0.1:9000`。
+
+现在，参考[官方文档](https://garagehq.deuxfleurs.fr/documentation/cookbook/reverse-proxy/)，只需使用下面配置，指向`127.0.0.1:3902`即可。
+
+```conf
+  location / {
+    proxy_pass http://你的Garage公网IP:3902;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Host $host;
+  }
+```
+
+### 重定义S3 API服务
+
+除此之外，在使用到S3 API的应用中，比如图床一键上传插件，我们之前可以直接在`oss.keke.su`进行上传，因为MinIO支持公开桶的桶策略，S3 API和图床外链都可以复用`9000`端口。
+
+然而，在Garage中，最佳实践是，再使用一个子域名单独反向代理至`3900`端口，仅作为S3 API使用。
+
+可以参考如下的Nginx反向代理配置：
+
+```conf
+  location / {
+    proxy_pass http://s3_backend:3900;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Host $http_host;
+    # Disable buffering to a temporary file.
+    proxy_max_temp_file_size 0;
+  }
+```
+
+## 结语
+
+至此，我们完成了所有的迁移步骤。
+
+如你所见，本博客所有图片外链已迁移至Garage，目前资源均正常访问。
+
+最后，希望Garage可以更好地接力MinIO吧～
