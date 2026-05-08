@@ -1,0 +1,92 @@
+---
+title: Codex 订阅一物多用：通过 CPA 代理输出 OpenAI 标准接口
+date: 2026-05-08T10:53:05Z
+tags:
+  - 技术向
+updatedOn: 2026-05-08T16:24:13Z
+image: https://oss.keke.su/image/2026/05/147acc6a4e84dd87b0d54b32ef2034bd.png
+draft: false
+
+FilePath: /keke.su/posts/2026-05-08-new-1.mdx
+Author: fx-k admin@fxit.top
+LastEditors: fx-k admin@fxit.top
+---
+
+## 前言
+
+最近好几个月没有更新了，并不是弃坑，而是博主开始当牛马了😭，更多的时间可能花在了公司的项目开发上。
+
+不过，当牛马也有说法的。好的磨能让你干得更轻松，从繁重的代码螺丝钉角色中解放出来，才有更多时间站在高处思考业务的全貌。因此，博主购入了ChatGPT Pro订阅，主要看中了其Codex的编码能力，同时也可以用于日常对话，额度目前看也够用。相比于Claude拒之门外的封号热潮，可以说这是博主目前觉得最值的订阅。
+
+诶，单纯用官方的客户端，听起来是很够用了。但，我们有很多AI场景，很多的AI客户端也需要接入模型。一般我们常见的，就比如说Bob、沉浸式翻译、Cherry Studio等，都需要API接入大模型。
+
+这个时候，很可惜，OpenAI的API使用是另外一套计费逻辑，不能复用ChatGPT订阅。要么你去自费购买各大厂的coding plan，要么pay-as-you-go。
+
+于是，一个伟大的项目出来了——[CPA (CLIProxyAPI)](https://help.router-for.me/cn/introduction/what-is-cliproxyapi.html)，就是一个可以将各大订阅转化为标准API接口的工具。我们可以运行CPA，将Codex订阅代理为标准的OpenAI API接口，从而在各个AI客户端以API的方式接入大模型。 
+
+## 安装CPA
+
+:::warning
+前排提醒：CPA可能违反OpenAI等提供商的用户协议，请谨慎使用 🥲。
+:::
+
+[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
+
+博主用的macOS，推荐大家使用Homebrew快速安装：`brew install cliproxyapi`。
+
+根据个人习惯，可以将配置存在`~/.cli-proxy-api/config.yaml`，于是执行：
+
+```bash
+brew services stop cliproxyapi
+mv "$(brew --prefix)/etc/cliproxyapi.conf" "$(brew --prefix)/etc/cliproxyapi.conf.bak"
+cp "$(brew --prefix)/etc/cliproxyapi.conf.bak" ~/.cli-proxy-api/config.yaml
+ln -s ~/.cli-proxy-api/config.yaml "$(brew --prefix)/etc/cliproxyapi.conf"
+```
+
+简要做一些配置，参考[官方配置指引](https://help.router-for.me/cn/configuration/basic.html)。
+
+执行`nano ~/.cli-proxy-api/config.yaml`编辑，大部分保持默认即可，这里说几个注意事项：
+
+1. “host”建议填"127.0.0.1"，如果你只需要本机访问API，更安全。
+2. “remote-management”下面的“secret-key”记得自己设定一个面板密码，否则进不去管理面板。设定好后重启服务会自动哈希为密文。
+3. 如果本机代理不是tun模式，记得配置“proxy-url”，否则墙内访问不到OpenAI等提供商。
+
+编辑完成后就可以启动CPA了：`brew services start cliproxyapi`。
+
+## 配置CPA
+
+打开[http://127.0.0.1:8317/management.html](http://127.0.0.1:8317/management.html)，自动进入到CPA面板的登录界面，输入前面设定的“secret-key”登录面板。
+
+![](https://oss.keke.su/image/2026/05/66403127cbd95d536ef907ea013413bf.png)
+
+首先，我们进入“配置面板”-“04认证配置”-“API密钥列表”，把所有的API密钥删除，然后点击“添加API密钥”-“生成”-“添加”，复制这个sk开头的密钥，这就是我们后面API接口用于鉴权的key。
+
+![](https://oss.keke.su/image/2026/05/aa1697046b8c24d7eb088da25f34763c.png)
+
+然后，进入“OAuth登录”，博主有Codex订阅，所以直接点击”Codex OAuth“登录，简单根据指引即可保存认证文件。
+
+最后，在“配额管理”中，可以看到我的Pro订阅额度。在“中心信息”中，也可以看到可用模型列表。
+
+![](https://oss.keke.su/image/2026/05/7dbd6cc7f42cebb2e55991a2ebf42c0c.png)
+
+![](https://oss.keke.su/image/2026/05/b6fe691bb05afde03a2c191b060b7bad.png)
+
+至此，配置部分结束。
+
+## 接入API
+
+现在，我们本地就跑起来了一个API服务。
+
+下面以OpenAI API接入为例，我们在第三方AI客户端填入：
+
+- Base URL：http://127.0.0.1:8317
+- API Key：前面复制的sk开头的字符串
+- 模型：在CPA面板“中心信息”中，可用模型列表里面的都可以填，比如“gpt-5.4-mini”
+
+然后，我们可以测试一下，发现已经成功跑通～
+
+## 结语
+
+CPA为我们提供了一个桥接AI客户端到Codex等供应商的渠道，可以将Codex订阅额度用到更多的场景中。甚至，你还可以搭配[cc-switch](https://github.com/farion1231/cc-switch)将Codex订阅接入Claude Code等工具😎。
+
+在AI时代，token消耗是一项无可避免的使用成本，有了CPA这类的魔法工具，我们可以以更低的成本入局，更轻松地拥抱AI时代～
