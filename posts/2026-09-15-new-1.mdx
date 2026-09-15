@@ -1,0 +1,148 @@
+---
+title: "万物皆可Plugin —— 将阿里云 ESA MCP 接入 ChatGPT Plugin"
+date: 2026-09-14T13:42:15.623Z
+tags:
+  - 技术向
+updatedOn: 2026-09-15T15:21:08.444Z
+image: https://oss.keke.su/image/2026/09/bf063638e05d0dc39cddb57f248b2cce.png
+draft: false
+FilePath: /keke.su/posts/2026-09-14-new-c295d045.mdx
+Author: fx-k admin@fxit.top
+LastEditors: fx-k admin@fxit.top
+---
+
+## 前言
+
+好久不见，想起来已经快4个月没更新文章了...每天不是在上班就是在上班😵‍💫
+
+最近一直在狂蹬Codex，发现自己已经完全离不开Agent了（~~都说21天养成一个好习惯~~）。然而，即使开了20x订阅，还是被gpt6瞬间跑完，gpt5.6sol极高也就勉勉强强...🥲
+
+而ChatGPT Chat模式的额度是独立的，不跟Work/Codex共享，但大部分人Chat在吃灰。。。这个时候，我们可以通过OpenAI~~赏赐~~的开发者模式，接入自己开发的plugin，并在plugin中调用外部mcp服务，达到近似work/codex的效果。
+
+除了不占用work/codex额度这个好处以外，将mcp包装为plugin，让你的chatgpt在全平台成为一个更加全能的日常助手，而无需codex remote依赖一台电脑挂着codex去做第三方操作。
+
+## 原理
+
+原理是比较简单的，以阿里云[官方的esa mcp](https://www.aliyun.com/solution/tech-solution/edge-function-mcp-one-click-global-deployment/2927469#cf318b9e896cl)为例：
+
+```json
+{
+  "mcpServers": {
+    "mcp-server-esa": {
+      "command": "npx",
+      "args": ["-y", "mcp-server-esa"],
+      "env": {
+        "ALIBABA_CLOUD_ACCESS_KEY_ID": "AccessKey ID",
+        "ALIBABA_CLOUD_ACCESS_KEY_SECRET": "AccessKey Secret"
+      }
+    }
+  }
+}
+```
+
+可以看到，实际上就是一个node进程，通过安装mcp-server-esa包去做。
+
+这个时候，问题1来了，ChatGPT没有一个平台让我们执行node进程，我们要解决“ChatGPT如何调用mcp-server-esa的问题”。
+
+通过博主的折腾，回答这个问题，有几种解决方案：
+
+1. 有一个伟大的项目[mcp-auth-proxy](https://github.com/sigbit/mcp-auth-proxy)，可以实现一键将这种node mcp包装为即插即用的http OAuth网关，并可以在Claude、Claude Code、ChatGPT、GitHub Copilot、Cursor等客户端使用。
+   -  这个时候，实际上我们把 MCP 变成了一个 ChatGPT 能访问的公网 HTTP 服务
+   -  链路：`ChatGPT --> 你的域名/ip --> 你的服务器 --> MCP --> 阿里云`
+2. 后来博主发现一个更好的途径，OpenAI官方的[Tunnel Service](https://github.com/openai/tunnel-client)，类似cloudflare tunnel，可以将私有的mcp服务通过openai官方tunnel暴露给chatgpt。
+   -  这个时候，MCP 不出公网，由你的服务器主动连 OpenAI，让 OpenAI 反向把调用送下来
+   -  链路：`ChatGPT --> OpenAI Tunnel --> 你的服务器 --> MCP --> 阿里云`
+
+如果只需要在ChatGPT使用，博主推荐方案2，因为无需对外暴露任何服务，只需要服务器能连上公网即可。不过，方案2需要你的服务器ip出口要在openai的服务地区，比如香港是不行的，这个时候可以自行挂代理绕过。。。
+
+本文以方案2为例，在chatgpt web中通过plugin接入阿里云esa mcp。
+
+## 准备工作
+
+所以，综上所述，你需要准备：
+
+1. 一台服务器（ip出口要在openai服务地区，比如美国）
+2. 为你的服务器安装好docker环境
+3. 一个开通了esa的阿里云账号（废话，没有esa你点进来干啥😠）
+4. 为你的阿里云账号创建ram用户并拿到`AccessKey ID`和`AccessKey Secret`，并赋予`AliyunESAFullAccess`权限（参考下文）
+5. chatgpt订阅用户（只在pro 20x确定可行，不确定其他订阅or免费用户可用）
+6. 为你的chatgpt账号创建tunnel和api key，拿到`tunnel_id`和`api_key`（参考下文）
+
+博主已经在GitHub开源了[chatgpt-esa-mcp-tunnel](https://github.com/fx-k/chatgpt-esa-mcp-tunnel)，支持配置socks5代理更换出口，并且修复了阿里云官方mcp schema不规范的问题。
+
+## 开始
+
+### 获取阿里云ak和sk
+
+此处博主直接贴官方教程，跟着来就行：
+
+> **创建RAM用户**
+> 1. 使用阿里云账号（主账号）或RAM管理员登录[RAM控制台](https://ram.console.aliyun.com/users?spm=a2c4g.29338759.0.0.6f0c111dTcjxnJ)，单击**创建用户**。
+![image.png](https://oss.keke.su/image/2026/09/7efed2c2f152bd9825c28ecbf5ff67e2.png)
+> 3. 填写RAM用户的**登录名称**，并勾选**控制台访问**和**使用永久AccessKey访问**。
+![image.png](https://oss.keke.su/image/2026/09/38efe2f85263ef070fadbde6af719b23.png)
+> 3. 单击**确定**，根据界面提示，完成**安全验证**。
+> 5. 单击**下载 CSV 文件**，将**AccessKey ID**和**AccessKey Secret**保存至本地。
+>    - 请务必保存好CSV文件，页面关闭后无法再次获取**AccessKey ID**和**AccessKey Secret**。
+![image.png](https://oss.keke.su/image/2026/09/43ac01ba17cd01ecf9812736320fbb2f.png)
+
+> **RAM用户授权**
+> 1. 返回[RAM 用户](https://ram.console.aliyun.com/users?spm=a2c4g.29338759.0.0.6f0c111dTcjxnJ)页面，找到上一步创建的RAM用户，单击**添加权限**。
+![image.png](https://oss.keke.su/image/2026/09/546e95ae9397418cd58daedc0f8c2cfe.png)
+> 2. 在**新增授权 > 权限策略**中搜索`AliyunESAFullAccess`权限并勾选，然后单击**确认新增授权**。
+![image.png](https://oss.keke.su/image/2026/09/7a7a70bfce12a89a6beff5b466db458d.png)
+
+### 获取OpenAI的tunnel_id和api_key
+
+#### 创建tunnel
+
+打开[OpenAI Tunnels](https://platform.openai.com/settings/organization/tunnels?utm_source=chatgpt.com)，点击Create tunnel，Name和Description随便写，Organizations选personal那个，ChatGPT workspaces就选默认那个。
+
+![image.png](https://oss.keke.su/image/2026/09/8006e14f6459104663300901d199392d.png)
+
+然后，你就得到了`tunnel_xxxx`开头的tunnel id。
+
+#### 创建api key
+
+打开[OpenAI Runtime API Keys](https://platform.openai.com/settings/organization/api-keys?utm_source=chatgpt.com)，点击Create new secret key，选择Service account，Service Key Name随便取，Project就选default那个，有效期可以选择永久，然后提交即可。
+
+![image.png](https://oss.keke.su/image/2026/09/5316df43f8cd19e5a126bd2d8c2dc9e9.png)
+
+然后，你就得到了api key（sk）。
+
+### 部署项目
+
+在服务器git clone博主的[chatgpt-esa-mcp-tunnel](https://github.com/fx-k/chatgpt-esa-mcp-tunnel.git)，然后`cp .env.example .env`，在`.env`中修改下面内容：
+
+```bash
+CONTROL_PLANE_TUNNEL_ID=你的OpenAI tunnel id
+CONTROL_PLANE_API_KEY=你的OpenAI api key
+
+ALIBABA_CLOUD_ACCESS_KEY_ID=你的阿里云ak
+ALIBABA_CLOUD_ACCESS_KEY_SECRET=你的阿里云sk
+
+MCP_COMMAND=mcp-server-esa-chatgpt
+ESA_MCP_UPSTREAM=mcp-server-esa
+```
+
+然后执行`docker compose up -d --build`即可（更多详情可以看readme）。
+
+### 接入ChatGPT Plugin
+
+打开[chatgpt.com](https://chatgpt.com)，点击左下角设置-账户安全与登录-开发者模式，打开“开发人员模式”。
+
+![image.png](https://oss.keke.su/image/2026/09/8427c726bf91ee5d23498c2700ee7d6f.png)
+
+然后打开[插件](https://chatgpt.com/plugins)页面，点击右上角加号-名称描述随便取-选择“隧道”-可用隧道选择刚刚创建的tunnel-身份验证选择“无身份验证”，然后创建即可。
+
+![image.png](https://oss.keke.su/image/2026/09/c6f5c940301b41f16515eabb34b81db7.png)
+
+然后可以在 设置-插件 里，成功看到刚刚添加的plugin，成功识别了很多esa工具：
+
+![image.png](https://oss.keke.su/image/2026/09/d5f6192e5a3feaf0acf39f2450916655.png)
+
+然后，打开新会话测试一下，发现已经成功调用了阿里云esa mcp，获取到了我们在阿里云上的esa站点、pages等信息。
+
+![image.png](https://oss.keke.su/image/2026/09/b34576870ef7ce29d98b72289b0922b9.png)
+
+至此，全文结束～
