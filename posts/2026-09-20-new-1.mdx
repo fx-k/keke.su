@@ -1,0 +1,130 @@
+---
+title: 万物皆可Plugin —— 将腾讯云 DNSPod 接入 ChatGPT Plugin
+date: 2026-09-20T07:52:14.226Z
+tags:
+  - 技术向
+updatedOn: 2026-09-20T11:46:11.817Z
+image: https://oss.keke.su/image/2026/09/c4dbccbeff18ce9c08d190ecd9e41d83.png
+
+draft: false
+FilePath: /keke.su/posts/2026-09-20-new-1.mdx
+Author: fx-k admin@fxit.top
+LastEditors: fx-k admin@fxit.top
+---
+
+## 前言
+
+前文 [《万物皆可Plugin —— 将阿里云 ESA MCP 接入 ChatGPT Plugin》](https://keke.su/posts/2026-09-15-new-1.html) 中，我们探讨了把阿里云官方 ESA MCP 使用 [OpenAI Tunnel Service](https://github.com/openai/tunnel-client) 的方式接入 ChatGPT Plugin。
+
+这是其中的一种实现方式，我们利用了 “阿里云官方MCP” 和 “OpenAI官方tunnel” 来干这件事情。但其实，我们也完全可以借助 “官方的API” 和 “自建OAuth2网页” 来实现ChatGPT Plugin的接入。
+
+
+![image.png](https://oss.keke.su/image/2026/09/03a777c859b35bcfdf864758c8c95240.png)
+
+
+今天我们就来干这件事，腾讯云其实已经提供了[官方的MCP](https://cloud.tencent.com/developer/mcp/server/11743)，但仅限于读，不能执行写操作（比如，无法修改域名解析等等），这也是我研究改用官方API的一个重要原因之一。
+
+但其实，对于像腾讯云 DNSPod 这类已经提供成熟官方 API 的服务，封装 MCP 的成本其实低到离谱（所以莫非腾讯不把写入能力封到MCP是担心误操作？🤨）。
+
+将 DNSPod 接入 ChatGPT 后，我们就可以很方便地“一句话”就让g老师帮你配置好解析。想象一下，每次你在Vercel、各种Pages、CDN服务做域名接入的时候，只需要把页面ctrl+c，再ctrl+v丢给g老师，然后就配置完成了，这是一个超级丝滑、省心且提效的过程。
+
+除此之外，你还可以让g老师，帮你做地域解析分流，又或是帮你分析一下当前的dns解析配置是否合理，等等等等...
+
+## 准备
+
+避免重复造轮子，博主搜到了一个完成度很高的项目：[zfx-t/dnspod-mcp-workers](https://github.com/zfx-t/dnspod-mcp-workers)，这是个很棒的思路，直接白嫖cf大善人的worker，但只封装了基础的CRUD功能，仅有9个mcp tools。
+
+博主在此基础上fork，并实现了31个mcp tools，其中包含：线路类型发现、记录详情、启用暂停、备注、分组、批量任务、快照回滚等功能，并修复了一下oauth2的页面跳转问题，目前也已经开源：[fx-k/dnspod-mcp-workers](https://github.com/fx-k/dnspod-mcp-workers)。
+
+所以，开始之前，你只需要：
+
+1. 一个cf账号，用于运行cf worker。
+2. 为你的腾讯云账号创建子账号（建议），然后拿到ak和sk。
+3. 本地装好git、node环境
+
+## 开始
+
+### 拉取项目
+
+拉取项目然后安装一下依赖：
+
+```bash
+git clone https://github.com/fx-k/dnspod-mcp-workers.git
+cd dnspod-mcp-workers
+
+npm install
+```
+
+后续我们都在`dnspod-mcp-workers`这个文件夹进行。
+
+### 登录cf workers
+
+这里我们主要是使用 Cloudflare 官方命令行工具 Wrangler，后续的登录、配置 Secret 和部署都由它完成。
+
+执行`npx wrangler login`，在浏览器中完成cf的登录。
+
+授权完成后，当前电脑上的wrangler就获得了操作该cf账号中workers的权限，后续才能把项目部署到自己的cf workers。
+
+### 获取腾讯云ak和sk
+
+在腾讯云控制台登录，进入 [创建子用户](https://console.cloud.tencent.com/cam/user/userType)，点击“快速创建”，随便取个用户名，访问方式选择“编程访问”，去掉“需要重置密码”的勾选，能关的MFA都关掉，用户权限选择`QcloudDNSPodFullAccess`和`QcloudDNSPodReadOnlyAccess`，然后点击创建即可拿到ak(SECRET_ID)和sk(SECRET_KEY)。
+
+![image.png](https://oss.keke.su/image/2026/09/157573f73cfa16a284c4027531070d64.png)
+
+然后在`dnspod-mcp-workers`目录执行：
+
+```bash
+npx wrangler secret put 你的SECRET_ID
+npx wrangler secret put 你的SECRET_KEY
+```
+
+执行每条命令后，终端都会提示输入对应的值。输入完成后，这些值会保存到 Cloudflare Workers 的 Secret 中。
+
+### 生成OAuth密钥
+
+这里我们需要执行下面两条命令，生成随机密钥：
+
+```bash
+openssl rand -hex 24 # 把结果作为 OAUTH_PASSWORD
+openssl rand -hex 32 # 把结果作为 OAUTH_JWT_SECRET
+```
+
+然后，同样的，执行：
+
+```bash
+npx wrangler secret put OAUTH_PASSWORD
+npx wrangler secret put OAUTH_JWT_SECRET
+```
+
+把刚刚生成好的密钥都设置进去即可。
+
+### 部署cf workers
+
+为了安全，项目默认的`wrangler.toml`里面，**只允许只读行为**，如果你需要授权ChatGPT写入权限，还需要编辑`wrangler.toml`。
+
+```bash
+[vars]
+DNSPOD_READ_ONLY = "false"  # 取消只读
+DNSPOD_ALLOW_DESTRUCTIVE = "true"  # 允许高危操作
+DNSPOD_WRITE_DOMAINS = "*"  # 允许所有域名被操作
+CORS_ALLOWED_ORIGINS = "https://chatgpt.com"  # 这里CORS保持为这个即可
+```
+
+完成这些配置后，就可以正式部署：`npm run deploy`。
+
+Wrangler 会把当前项目上传并部署到 Cloudflare Workers，等待部署完成，就可以得到类似`https://dnspod-mcp.<你的 Cloudflare 子域>.workers.dev`的链接。
+
+### 接入ChatGPT
+
+参考 [《万物皆可Plugin —— 将阿里云 ESA MCP 接入 ChatGPT Plugin》](https://keke.su/posts/2026-09-15-new-1.html#%E6%8E%A5%E5%85%A5chatgpt-plugin) 。
+
+不过不要选择“隧道”，而是选择“服务器URL”，然后输入`https://你的-worker.workers.dev/mcp`，身份验证再选择`OAuth`即可。
+
+![image.png](https://oss.keke.su/image/2026/09/1656358f33a9c326b69565f702bbb178.png)
+
+在新会话尝试一下，发现已经成功连上了。
+
+
+![image.png](https://oss.keke.su/image/2026/09/0f527ee4e75f1592a13e3e950153bb67.png)
+
+至此，全文结束～
