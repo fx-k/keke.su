@@ -3,15 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node scripts/prepare-seo.mjs --offline",
     "dev": "run-p next-dev watch-content",
     "next-dev": "next dev -p 3456",
-    "build": "next build",
+    "build": "node scripts/prepare-seo.mjs && next build",
     "start": "next start",
     "new:post": "node ./scripts/new-post",
     "lint": "next lint",
     "lint:staged": "lint-staged",
     "prettier": "prettier --write './src/**/*.{js,jsx,ts,tsx,json}'",
-    "watch-content": "node ./scripts/watcher.js"
+    "watch-content": "node ./scripts/watcher.js",
+    "seo:check": "node scripts/prepare-seo.mjs --offline",
+    "test:seo": "node --test scripts/seo.test.mjs scripts/seo-title.test.mjs scripts/seo-storage.test.mjs"
   },
   "dependencies": {
     "katex": "0.16.8",

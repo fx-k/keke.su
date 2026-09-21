@@ -1,0 +1,29 @@
+name: SEO metadata checks
+on:
+  push:
+    paths: ['src/**', 'scripts/**', 'posts/**', 'site.config.js', 'package*.json', '.github/workflows/seo-check.yml']
+  pull_request:
+    paths: ['src/**', 'scripts/**', 'posts/**', 'site.config.js', 'package*.json', '.github/workflows/seo-check.yml']
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Unit, metadata and persistence tests (mock services only)
+        run: npm run test:seo
+      - name: Prepare all published descriptions without API or Redis access
+        run: npm run seo:check
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Confirm article files were not modified
+        run: git diff --exit-code -- posts/

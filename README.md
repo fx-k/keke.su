@@ -19,6 +19,7 @@
 - 😎 Profile使用打字机特效，支持多条轮播展示，专享个人slogan~
 - 👐 友链图标自动展示，更好的友链管理逻辑（更方便下架跑路的友链~
 - 💭 支持Artalk自部署评论系统（避免第三方评论广告/倒闭
+- 🤖 可选 AI 文章摘要，自动生成独立的 description，SEO更友好~
 
 ## 部署
 
@@ -63,6 +64,24 @@
 3. 注册[Vercel](https://vercel.com/)账户，然后将你fork后的仓库进行绑定。方法很简单，可以直接参考官方的[guide](https://vercel.com/docs/getting-started-with-vercel)。（记得要在Vercel里面把你的 `.env` 文件内容配置到环境变量中）
 4. 可以在Vercel后台绑定你自己的域名，或者直接使用Vercel自动为你生成的专属域名。
 5. 至此，部署完成。你可以在本地写mdx文件，然后 `git push` 到你fork后的仓库，Vercel会自动部署你每次commit后的内容，实现网站更新。
+
+### AI 摘要（SEO优化，可选）
+
+在 `site.config.js` 的 `ai_desc_gen` 中调整提示词和生成规则，每个选项都有注释。默认 `auto`：不配 Key 就用正文摘录，照常部署，不影响写博客。
+
+要启用，只需在 Vercel 的 **Production 环境变量**中补上下面三项（本地构建填在 `.env.local`，真实 Key 不要提交到仓库）：
+
+```bash
+OPENAI_API_KEY=你的API_Key
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=你的服务商支持的文本模型
+```
+
+API 地址可以换成自己的 OpenAI 兼容服务。摘要会复用前面配置的 Upstash，请同时确认 Redis 的两个环境变量已设置，并**关闭数据库的 Eviction**。
+
+之后仍然是 `git push` 👉 Vercel 自动构建：为已发布文章准备摘要，有匹配记录就复用，缺少时才生成、保存，不改文章内容。清空构建缓存不会重写已保存摘要，访客访问不调用 AI。
+
+默认 AI 失败会停止构建；Preview 只读取已有摘要，缺少时用摘录。更多选项见 [SEO 配置](./docs/seo.md)，环境变量参考 [`.env.example`](./.env.example)。
 
 ## 写博客
 

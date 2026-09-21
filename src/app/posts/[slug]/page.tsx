@@ -27,6 +27,9 @@ import { Metadata } from 'next'
 import config from 'config'
 import { Heading } from '@/components/TableOfContents'
 import { getImageInfo } from '@/common/image'
+import { getPostDescription } from '@/common/seo'
+import { blogPosting, safeJson } from '@/common/seo-utils'
+import { getSiteUrl } from '@/common/url'
 import PostPage from './PostPage'
 import AutoRefresh from './AutoRefresh'
 import { redirect } from 'next/navigation'
@@ -46,13 +49,14 @@ export async function generateMetadata({ params }: { params: { slug: string } })
   if (!isExists) return {}
 
   const frontmatter = await getPostFrontmatter(slug)
+  const description = await getPostDescription(slug)
 
   return {
     title: frontmatter.title,
-    description: config.description,
+    description,
     openGraph: {
       title: frontmatter.title,
-      description: config.description,
+      description,
       images: '/api/og',
     },
     alternates: {
@@ -125,9 +129,21 @@ export default async function Post({ params }: { params: { slug: string } }) {
   const heroImageInfo = frontmatter.image
     ? await getImageInfo(frontmatter.image)
     : undefined
+  const structuredData = blogPosting({
+    title: frontmatter.title,
+    description: await getPostDescription(slug),
+    url: getSiteUrl(`/posts/${slug}.html`).href,
+    author: config.name,
+    authorUrl: getSiteUrl('/').href,
+    language: config.language || 'zh-CN',
+    image: frontmatter.image,
+    date: frontmatter.date,
+    updatedOn: frontmatter.updatedOn,
+  })
 
   return (
     <>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: safeJson(structuredData) }} />
       <PostPage
         slug={slug}
         code={code}
