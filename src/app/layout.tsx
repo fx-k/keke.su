@@ -28,7 +28,7 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: {
     default: config.title,
-    template: `%s｜${config.title}`,
+    template: `%s${config.seo.titleSeparator}${config.title}`,
   },
   description: config.description,
   metadataBase: getSiteUrl(),

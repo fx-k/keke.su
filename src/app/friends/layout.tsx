@@ -1,9 +1,9 @@
 import type { Metadata } from 'next'
 import type { ReactNode } from 'react'
+import { navigationTitle } from '@/common/seo-titles'
 
-// Metadata stays in a server layout; the existing client page and its UI are untouched.
 export const metadata: Metadata = {
-  title: '友情链接',
+  title: navigationTitle('friends'),
 }
 
 export default function FriendsLayout({ children }: { children: ReactNode }) {

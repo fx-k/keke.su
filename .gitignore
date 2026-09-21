@@ -52,3 +52,7 @@ src/post-helpers
 public/images/*
 !public/images/test-hero-image.webp
 .obsidian
+
+# Disposable SEO compiler input (authoritative AI records are in Redis)
+/src/generated/seo-build.js
+/src/generated/seo-build.js.tmp

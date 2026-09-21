@@ -1,10 +1,9 @@
 name: SEO metadata checks
 on:
   push:
-    branches: [main, 'seo/metadata-ai-20260921']
-    paths: ['src/**', 'scripts/**', 'posts/**', '.github/workflows/seo-check.yml']
+    paths: ['src/**', 'scripts/**', 'posts/**', 'site.config.js', 'package*.json', '.github/workflows/seo-check.yml']
   pull_request:
-    paths: ['src/**', 'scripts/**', 'posts/**', '.github/workflows/seo-check.yml']
+    paths: ['src/**', 'scripts/**', 'posts/**', 'site.config.js', 'package*.json', '.github/workflows/seo-check.yml']
 permissions:
   contents: read
 jobs:
@@ -20,8 +19,11 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: node --test scripts/seo.test.mjs scripts/seo-title.test.mjs
-      - name: Verify all published posts have descriptions (no API)
-        run: node scripts/generate-seo-descriptions.mjs --dry-run
+      - name: Unit, metadata and persistence tests (mock services only)
+        run: npm run test:seo
+      - name: Prepare all published descriptions without API or Redis access
+        run: npm run seo:check
       - name: Type check
         run: npx tsc --noEmit
+      - name: Confirm article files were not modified
+        run: git diff --exit-code -- posts/

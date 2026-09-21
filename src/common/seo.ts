@@ -1,26 +1,22 @@
 import fs from 'fs/promises'
 import path from 'path'
 import matter from 'gray-matter'
-import descriptions from '@/generated/seo-descriptions.json'
-import { fallbackDescription, sourceHash, validDescription } from './seo-utils'
+import config from 'config'
+import { entries } from '@/generated/seo-build'
+import { fallbackDescription, sourceHash, truncate } from './seo-utils'
 
-interface DescriptionEntry {
-  description: string
-  sourceHash: string
-  model?: string
-  generatedAt?: string
-}
-
-// Server-side only: never calls an LLM during page requests or normal builds.
+// Only compiler output is read here. Redis and AI clients exist in build scripts only.
 export async function getPostDescription(slug: string): Promise<string> {
   const raw = await fs.readFile(path.join(process.cwd(), 'posts', `${slug}.mdx`), 'utf8')
   const { data, content } = matter(raw)
   const title = String(data.title || slug)
   const tags = Array.isArray(data.tags) ? data.tags.map(String) : []
-  const cached = (descriptions.posts as Record<string, DescriptionEntry>)[slug]
-  if (cached?.sourceHash === sourceHash(title, tags, content) && validDescription(cached.description)) {
-    return cached.description
+  if (process.env.NODE_ENV === 'development' || data.draft) {
+    return truncate(fallbackDescription(title, content), config.seo.description.maxLength)
   }
-  // New/changed posts work immediately even before the optional AI workflow finishes.
-  return fallbackDescription(title, content)
+  const record = entries[slug]
+  if (!record || record.sourceHash !== sourceHash(title, tags, content)) {
+    throw new Error('SEO compiler input missing or stale; run npm run build')
+  }
+  return record.description
 }

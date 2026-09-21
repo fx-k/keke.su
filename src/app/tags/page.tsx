@@ -2,9 +2,10 @@ import React from 'react'
 import { getLatestPosts } from '@/common/post'
 import TagsPage from './TagsPage'
 import type { Metadata } from 'next'
+import { navigationTitle } from '@/common/seo-titles'
 
 export const metadata: Metadata = {
-  title: '标签',
+  title: navigationTitle('tags'),
 }
 
 async function getTags() {
