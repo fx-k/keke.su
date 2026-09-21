@@ -10,7 +10,6 @@ import rehypeKatex from 'rehype-katex'
 import remarkReadingTime from 'remark-reading-time'
 import remarkReadingMdxTime from 'remark-reading-time/mdx'
 import remarkMdxCodeProps from '@/lib/unified/remark-mdx-code-props'
-import remarkLinkCard from '@/lib/unified/remark-link-card'
 import remarkImageInfo from '@/lib/unified/remark-image-info'
 import { visit } from 'unist-util-visit'
 import type { Plugin } from 'unified'
@@ -32,7 +31,10 @@ import { blogPosting, safeJson } from '@/common/seo-utils'
 import { getSiteUrl } from '@/common/url'
 import PostPage from './PostPage'
 import AutoRefresh from './AutoRefresh'
-import { redirect } from 'next/navigation'
+import { notFound } from 'next/navigation'
+
+// Articles are repository files published by a build; unknown slugs must not render on demand.
+export const dynamicParams = false
 
 export async function generateStaticParams() {
   const posts = await getAllPosts()
@@ -46,7 +48,7 @@ export async function generateMetadata({ params }: { params: { slug: string } })
   const slug = decodeURIComponent(params.slug)
 
   const isExists = await isPostExists(slug)
-  if (!isExists) return {}
+  if (!isExists) notFound()
 
   const frontmatter = await getPostFrontmatter(slug)
   const description = await getPostDescription(slug)
@@ -73,7 +75,10 @@ export default async function Post({ params }: { params: { slug: string } }) {
   const headings: Heading[] = []
 
   const isExists = await isPostExists(slug)
-  if (!isExists) redirect('/404')
+  if (!isExists) notFound()
+
+  // Link-card dependencies are needed only for existing MDX, never for a missing article.
+  const { default: remarkLinkCard } = await import('@/lib/unified/remark-link-card')
 
   const { code, frontmatter } = await bundleMDX<PostFrontmatter>({
     file: path.join(process.cwd(), `posts/${slug}.mdx`),
