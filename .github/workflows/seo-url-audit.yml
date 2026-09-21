@@ -1,0 +1,25 @@
+name: SEO URL audit (read only)
+on:
+  workflow_dispatch:
+  push:
+    branches: ['seo/metadata-ai-20260921']
+    paths: ['scripts/audit-seo-urls.mjs', '.github/workflows/seo-url-audit.yml']
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: node scripts/audit-seo-urls.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: seo-url-audit
+          path: seo-url-audit.json
+          retention-days: 7
