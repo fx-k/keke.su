@@ -14,6 +14,7 @@ import DesktopOnly from '@/components/DesktopOnly'
 import BackToTop from '@/components/BackToTop'
 import config from 'config'
 import { getSiteUrl } from '@/common/url'
+import { safeJson } from '@/common/seo-utils'
 import { Inter } from 'next/font/google'
 import { SpeedInsights } from '@vercel/speed-insights/next'
 import { ThemeProvider } from 'next-themes'
@@ -46,13 +47,13 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${inter.className} antialiased`} suppressHydrationWarning>
+    <html lang={config.language || 'zh-CN'} className={`${inter.className} antialiased`} suppressHydrationWarning>
       <head>
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
-            __html: JSON.stringify({
-              "@context": config.siteUrl,
+            __html: safeJson({
+              "@context": "https://schema.org",
               "@type": "WebSite",
               "name": config.title,
               "alternateName": config.alternateTitle,

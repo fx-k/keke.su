@@ -3,6 +3,13 @@ import { getLatestPosts } from '@/common/post'
 import dayjs from 'dayjs'
 import Profile from '@/components/Profile'
 import PostList, { PostListProps } from '@/components/PostList'
+import type { Metadata } from 'next'
+import config from 'config'
+
+export const metadata: Metadata = {
+  title: `文章归档｜${config.title}`,
+  description: `${config.title}的文章归档，按年份浏览全部已发布文章。`,
+}
 
 const formatPosts = (posts: PostListProps['posts']) => {
   const m = new Map<number, PostListProps['posts']>()

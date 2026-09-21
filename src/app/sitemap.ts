@@ -1,34 +1,24 @@
 import { MetadataRoute } from 'next'
 import { getSiteUrl } from '@/common/url'
 import { getLatestPosts } from '@/common/post'
+import { postDates } from '@/common/seo-utils'
 
 export const revalidate = 60
 
 export default async function sitemap() {
-  const staticMap = [
-    {
-      url: getSiteUrl('/').href,
-      lastModified: new Date(),
-    },
-    {
-      url: getSiteUrl('/posts').href,
-      lastModified: new Date(),
-    },
-    {
-      url: getSiteUrl('/tags').href,
-      lastModified: new Date(),
-    },
-    {
-      url: getSiteUrl('/friends').href,
-      lastModified: new Date(),
-    },
-  ] satisfies MetadataRoute.Sitemap
+  // Static pages have no reliable content timestamp: omit lastModified.
+  const staticMap = ['/', '/posts', '/tags', '/friends'].map(route => ({
+    url: getSiteUrl(route).href,
+  })) satisfies MetadataRoute.Sitemap
 
   const posts = await getLatestPosts()
-  const dynamicMap = posts.map(post => ({
-    url: getSiteUrl(`/posts/${post.slug}.html`).href,
-    lastModified: new Date(),
-  })) satisfies MetadataRoute.Sitemap
+  const dynamicMap = posts.map(post => {
+    const { modified } = postDates(post.frontmatter)
+    return {
+      url: getSiteUrl(`/posts/${post.slug}.html`).href,
+      ...(modified ? { lastModified: modified } : {}),
+    }
+  }) satisfies MetadataRoute.Sitemap
 
   return [...staticMap, ...dynamicMap]
 }
