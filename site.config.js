@@ -89,7 +89,9 @@ module.exports = {
   },
   backToTopButton: true,
 
-  // 构建期文章摘要。AI 记录持久保存在 Upstash，访客读取页面不调用模型。
+  // 可选 SEO 优化功能：构建时为每篇已发布文章生成独立的 AI description，
+  // 用于页面摘要元数据和 BlogPosting 结构化数据，不修改文章内容。
+  // AI 摘要持久保存在 Upstash，已有同内容摘要直接复用，访客读取页面不调用模型。
   // API 地址、Key、模型和 Redis 凭据在部署环境变量中配置，参见 .env.example。
   ai_desc_gen: {
     // 摘要模式，默认 'auto'。可选：
