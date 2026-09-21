@@ -36,10 +36,11 @@ function metadataFunction(path, extra = {}) {
 }
 const root = staticMetadata('src/app/layout.tsx')
 const withBrand = title => root.title.template.replace('%s', title)
-test('root uses the configured separator and home brand', () => {
+test('root fixes the title separator independently of AI configuration', () => {
   assert.equal(root.title.default, config.title)
   assert.equal(root.title.template, `%s | ${config.title}`)
   assert.equal(root.openGraph.images, '/api/og')
+  assert.doesNotMatch(fs.readFileSync('src/app/layout.tsx', 'utf8'), /titleSeparator|ai_desc_gen|config\.seo/)
 })
 test('page labels are identical to navigation locale values', () => {
   for (const [file, section] of [['src/app/posts/page.tsx', 'posts'], ['src/app/tags/page.tsx', 'tags'], ['src/app/friends/layout.tsx', 'friends']]) {

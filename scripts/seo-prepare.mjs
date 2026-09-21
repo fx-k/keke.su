@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto'
 import utils from '../src/common/seo-utils.js'
 import { fingerprint, SeoError } from './seo-settings.mjs'
 
-export const recordKey = (post, s) => `${s.namespace}:${fingerprint(post.slug).slice(0, 24)}:${post.hash}:r${s.revisions[post.slug] || 1}`
+// Stable storage identity: site, article slug and content hash. No generation settings.
+export const recordKey = (post, s) => `${s.namespace}:${fingerprint(post.slug).slice(0, 24)}:${post.hash}:r1`
 
 function decode(value, post) {
   if (value === null) return null
@@ -26,13 +27,12 @@ export async function preparePosts(posts, settings, { store, generate, sleep = m
   }
   const keys = posts.map(p => recordKey(p, s))
   const saved = []
-  // Scan once; do not query Redis once for metadata and again for BlogPosting.
+  // Scan once; metadata and BlogPosting share the same materialized result.
   for (let i = 0; i < keys.length; i += 100) saved.push(...await store.readMany(keys.slice(i, i + 100)))
   let attempted = 0
   const useRecord = (post, value) => {
     const record = decode(value, post)
     if (!record) return false
-    // Editing a style/length setting must not silently regenerate existing text.
     entries[post.slug] = { sourceHash: post.hash, description: record.description, source: 'ai' }
     return true
   }
@@ -41,7 +41,7 @@ export async function preparePosts(posts, settings, { store, generate, sleep = m
     if (useRecord(post, saved[i])) { stats.reused++; continue }
     if (s.readOnly) { entries[post.slug] = excerpt(post); stats.fallback++; stats.deferred++; continue }
     if (attempted >= s.limit) {
-      if (!s.isPreview && s.onAIError === 'fail-build') throw new SeoError('AI article limit reached before full coverage', 'ai')
+      if (s.onAIError === 'fail-build') throw new SeoError('AI article limit reached before full coverage', 'ai')
       entries[post.slug] = excerpt(post); stats.fallback++; stats.deferred++; continue
     }
     const key = keys[i], lock = `${key}:lock`, owner = randomUUID()
@@ -55,22 +55,21 @@ export async function preparePosts(posts, settings, { store, generate, sleep = m
     }
     if (!acquired) { stats.reused++; continue }
     try {
-      // Another builder may have completed between MGET and acquiring this lock.
       if (useRecord(post, await store.read(key))) { stats.reused++; continue }
       attempted++
       let description
-      try { description = await generate(post, s) }
-      catch (error) {
+      try {
+        description = await generate(post, s)
+        if (!utils.validDescription(description) || Array.from(description).length > s.maxLength) throw new SeoError('Generator returned invalid description', 'ai')
+      } catch (error) {
         if (error?.kind !== 'ai' || s.onAIError === 'fail-build') throw error
         stats.failed++; stats.fallback++; entries[post.slug] = excerpt(post)
         log(`WARN ${post.slug}: ${error.message}; extractive description used`)
         continue
       }
-      if (!utils.validDescription(description) || Array.from(description).length > s.maxLength) throw new SeoError('Generator returned invalid description', 'ai')
       const record = { version: 1, slug: post.slug, sourceHash: post.hash, description,
         model: s.model, promptHash: fingerprint(s.prompt), language: s.language,
         generatedAt: new Date().toISOString() }
-      // Compare lock ownership and save-once atomically; use the stored winner.
       const accepted = await store.save(key, lock, owner, record)
       if (accepted === null || accepted === false || !useRecord(post, accepted)) throw new SeoError('SEO record was not persisted; deployment stopped', 'storage')
       stats.generated++

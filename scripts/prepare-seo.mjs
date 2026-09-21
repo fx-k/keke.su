@@ -42,7 +42,7 @@ try {
   if (settings.mode === 'ai') {
     apiEndpoint(settings.baseUrl)
     store = createStore()
-    console.log(`[seo] AI ${settings.readOnly ? 'read-only preview' : settings.isPreview ? 'isolated preview' : 'production'}; Redis is authoritative`)
+    console.log(`[seo] AI ${settings.readOnly ? 'read-only preview' : 'build'}; Redis is authoritative`)
     if (!settings.readOnly) console.log('[seo] Required storage policy: Eviction disabled; description records have no TTL. Verify in Upstash Console.')
   } else console.log('[seo] Extractive mode; no AI or Redis calls')
   const usage = { requests: 0, inputTokens: 0, outputTokens: 0 }
@@ -52,7 +52,6 @@ try {
       onUsage: u => { usage.inputTokens += Number(u.prompt_tokens) || 0; usage.outputTokens += Number(u.completion_tokens) || 0 },
     }) }
   const result = await preparePosts(posts, settings, deps)
-  // Optional cold-materialization check: another pass must not regenerate any AI record.
   if (args.has('--check') && settings.mode === 'ai' && !settings.readOnly && !result.stats.fallback) {
     const second = await preparePosts(posts, settings, { ...deps,
       generate: async () => { throw new SeoError('Persistence check attempted regeneration', 'storage') } })

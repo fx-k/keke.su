@@ -12,7 +12,7 @@ export async function getPostDescription(slug: string): Promise<string> {
   const title = String(data.title || slug)
   const tags = Array.isArray(data.tags) ? data.tags.map(String) : []
   if (process.env.NODE_ENV === 'development' || data.draft) {
-    return truncate(fallbackDescription(title, content), config.seo.description.maxLength)
+    return truncate(fallbackDescription(title, content), config.ai_desc_gen?.maxLength ?? 160)
   }
   const record = entries[slug]
   if (!record || record.sourceHash !== sourceHash(title, tags, content)) {

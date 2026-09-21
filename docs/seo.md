@@ -2,65 +2,67 @@
 
 ## 快速使用
 
-站点保留 Vercel 原生 Git 部署。构建命令为 `npm run build`，先准备摘要，再执行 `next build`。没有 AI Key 时，默认使用每篇文章的正文摘录，无模型调用和摘要数据库访问。原有计数、评论等功能仍按其各自文档配置。
+构建命令为 `npm run build`，先准备摘要，再执行 `next build`；使用 Vercel 原生 Git 部署即可。默认未配置 AI Key 时，为每篇文章生成独立正文摘录，无模型调用或摘要数据库访问。计数、评论等功能按其各自要求配置。
 
-全局选项位于 `site.config.js` 的 `seo` 部分，每个选项均有可选值、范围和行为说明。标题复用 `src/locales` 的导航文案，默认分隔符为 ` | `。页面正文和 MDX frontmatter 不由 SEO 生成器修改。
+全局 AI 摘要选项在 `site.config.js` 的 `ai_desc_gen` 中。每个选项均有默认值、可选值或范围及行为注释。浏览器标题复用 `src/locales` 的导航名称，格式固定为“页面名称 | 站名”；首页只显示站名。标题样式与 AI 摘要设置独立。生成器不修改页面正文或 MDX frontmatter。
 
-## 可选 AI
+## 配置
 
-在 Vercel 项目的环境变量中设置 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_MODEL`，以及已有的 `UPSTASH_REDIS_REST_URL`、`UPSTASH_REDIS_REST_TOKEN`。模型名必须是服务商支持的文本模型。默认 API 地址是 `https://api.openai.com/v1`；自定义服务需支持 Chat Completions 与 `max_completion_tokens`。秘密不得写入 site.config.js，不得使用 NEXT_PUBLIC_ 前缀。参见根目录 `.env.example`。
+| 字段 | 默认值 | 含义 |
+| --- | --- | --- |
+| mode | auto | auto：有 Key 启用 AI、无 Key 使用摘录；ai：要求 AI 接入配置；extractive：只用摘录，不读写摘要数据库。 |
+| onAIError | fail-build | fail-build：调用失败停止构建；fallback-extractive：调用失败的文章使用摘录并明确警告。 |
+| maxLength | 160 | 新生成摘要的字符上限，整数 20～160；包括英文、标点和空格。 |
+| maxGenerationsPerBuild | 200 | 单次构建尝试生成的文章数，整数 1～500；复用记录不计入。 |
+| timeoutMs | 60000 | 单次模型请求超时，整数 1000～120000 毫秒。 |
+| maxRetries | 2 | 网络、429、5xx 的额外重试次数，整数 0～3；其他上游 HTTP 错误不重试。 |
+| prompt | 全局配置中的文本 | 摘要文风提示词，最多 16000 字符。 |
 
-不需要配置额外的摘要模式环境变量。`mode`、提示词和故障策略只从 site.config.js 读取。
+摘要没有适用于所有语言、查询和设备的最佳字符数。Google 可能按设备宽度截断，也可能用正文另行生成搜索摘要。160 是本项目的输出上限，不是排名规则或完整展示保证。默认文风建议一至两句、约 80～130 个字符，以准确概括和可读性为先，实际请求上限优先。
 
-- `auto`：有 Key 使用 AI，无 Key 使用正文摘录。
-- `ai`：缺少凭据或模型视为配置错误。
-- `extractive`：不查询摘要数据库、不使用 AI 摘要。
+`maxLength` 和提示词只约束新生成结果；有效的已保存文本不因配置变动而被截断或重写。
 
-只给受信任的 Vercel 环境/分支配置凭据。`Preview` 默认只读正式摘要，无缺失条目写入、无付费调用。`preview: 'isolated'` 可以做小样试跑，数据按分支及文风隔离，最多生成 `previewMaxGenerations` 篇，默认 2 篇。预览成功不代表正式环境已配置或历史文章已全部回填。
+## 模型接入
 
-## 唯一持久数据源
+Vercel 环境变量中设置 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_MODEL`，以及 `UPSTASH_REDIS_REST_URL`、`UPSTASH_REDIS_REST_TOKEN`。默认 API 地址为 `https://api.openai.com/v1`。自定义服务需支持 Chat Completions、配置的文本模型和 `max_completion_tokens`。秘密不得写入全局配置或使用 NEXT_PUBLIC_ 前缀，参见 `.env.example`。
 
-Upstash Redis 保存正式 AI 摘要。记录不设置 TTL，启用前必须在 Upstash 关闭 Eviction。此数据库设置需要站点管理员在控制台核验，构建脚本不会更改数据库策略。容量满时应明确拒绝写入，而不是淘汰已保存的摘要；持久存储不等于备份，应自行配置备份。
+模式、提示词和失败策略只从 `ai_desc_gen` 读取，不需要额外的摘要模式环境变量。auto 只在启动时决定是否使用 AI：Key 存在时，之后的 AI 调用失败与 ai 模式执行相同的 onAIError，不会绕开策略自动退回摘录。
 
-存储命名空间由站点 origin 派生，只写 `seo:descriptions:v1:*` 下的摘要与短期锁，不改浏览量、点赞、限流键。文章内容哈希对应不可变摘要记录。回到旧文章版本可复用旧摘要；更换 Key、模型、编辑提示词或 CSS 不自动改写历史描述。记录保留生成时模型、提示词哈希及生成时间供追踪。
+Vercel Preview 内置为只读：可读取匹配的正式摘要，缺失时使用摘录，不创建摘要记录、不获取生成锁、不调用付费模型。这是预览保护，不是生产 AI 失败后的降级；预览完成不代表正式 AI 覆盖完成。只给受信任的环境及分支提供凭据。本地开发默认离线摘录。
 
-要有意识地重生成某一篇，在 `revisions` 中为该文章指定更高的正整数，例如 `{ 'my-post': 2 }`，重新构建即可。旧记录保留。删除原文或转草稿的文章不会参与生成，也不会因此自动删除历史记录。
+## 持久数据
 
-同一文章同一版本的并行生成使用带过期的锁；正式记录无过期。保存时以 Lua 校验锁所有权并写入一次，其他构建读取已保存的结果。崩溃、网络响应丢失或租约到期仍可能造成重复模型调用，不能承诺精确一次计费；但未成功保存的结果不会被发布，不以最后完成者覆盖已保存文字。
+Upstash Redis 是 AI 摘要唯一持久源。记录没有 TTL，数据库必须关闭 Eviction，并安排备份。构建脚本不会自动修改数据库管理设置。
 
-## 构建与访问
+记录身份由站点 origin、文章 slug 与文章内容哈希确定，不包含模型、Key、提示词或构建时间。更改模型或提示词不会自动改写已保存的同内容摘要。文章内容改变才会生成相应的新记录，旧内容版本的记录保留。删除文章或改为草稿不会发起生成，也不会自动删除已有数据库记录。
 
-构建时批量从 Redis 读取记录；缺失版本才生成、校验并保存。保存成功后汇总成当前构建的 `src/generated/seo-build.js`，这是被 Git 忽略的编译输入，每次构建都会删除并重建，永远不作为读取持久数据的来源。它不包含 Key、Token 或原文章内容，不能用来恢复 Redis。
+构建批量读取 Redis；确认记录不存在时才调用 AI。新结果必须校验并保存成功，才能用于页面。摘要通过短期锁和原子保存控制并发，同一记录使用已保存的结果。崩溃、超时或租约到期仍可能造成重复模型调用，不能承诺精确一次计费。
 
-HTML、BlogPosting 与部署中的服务端模块使用当次构建的固化结果。访客访问时，摘要逻辑不连接 Redis、不调用模型。网站原有浏览量与点赞 API 仍有自己的 Redis 访问，行为不变。
+编译输入 `src/generated/seo-build.js` 在每次构建时删除并重建，被 Git 忽略，不作为记录恢复或数据库故障备用来源。页面使用当次构建的固化结果，不在访问时为摘要连接 Redis 或调用 AI。浏览量、点赞和限流仍遵循各自的运行时逻辑。
 
-清空构建缓存后，仍从 Redis 读回已保存摘要，不重新生成。Redis 读写失败或记录损坏始终停止构建，不能当作摘要不存在。数据库数据实际被删除时无法凭空恢复，需从数据库备份恢复。
+## 失败处理
 
-## 模型失败
+默认 fail-build 在 AI 失败时停止构建。选择 fallback-extractive 后，上游 HTTP 错误（包括 400/401/403/404）、超时、限流、服务错误、拒绝或不合格输出都可以让对应文章使用正文摘录，日志明确提示错误。非重试类 HTTP 错误直接交给策略处理，不反复重试。摘录不写入 Redis、不计为 AI 成功，下次构建仍可尝试生成；已有匹配的 AI 摘要不受影响。
 
-`fail-build` 会停止当前构建；`fallback-extractive` 会对模型超时、429、5xx、输出不合格的文章使用摘录并记录警告。摘录不写入 Redis，也不计为 AI 成功，下次构建仍可重试。非法配置、HTTP 鉴权/参数错误和数据库错误不允许降级。已有内容匹配的摘要原样使用。
+本地配置错误（未知字段、非法枚举、缺少必需模型配置、非法 API 地址）以及 Redis 读写错误、损坏记录始终停止构建。数据库错误不能当作“未找到记录”，也不能用新文案替代已保存文本。
 
-每次构建的文章生成上限只计需要生成的文章，不计读取命中的文章；单篇请求有超时与有限重试。达到上限后按所选策略停止或降级。首次历史回填可能涉及所有已发布文章，费用按服务商账单计算。控制台输出 `[seo] SUMMARY`，包含文章数、复用、生成、失败、延期、摘录数及网关报告的 token 用量，不输出秘密。
-
-新摘要风格是从原文实际动机切入，再说明做法；无明确动机时不编造。模型收到标题、标签和最多 12000 字符的清理后正文，不包括图片文件及代码块。格式验证不等于事实审校，正式启用前应抽查技术文和随笔。
-
-## 元数据
-
-文章 sitemap lastmod 和 BlogPosting dateModified 使用有效 updatedOn/date，不采用构建时间或摘要生成时间。日期缺失时省略。标题保持原文，JSON-LD 使用 https://schema.org 并安全序列化，canonical 仍使用站点的既有文章 URL 规则。结构化数据和描述不保证收录、排名或特定搜索摘要。
+达到单次生成上限后，同样按 onAIError 停止或使用摘录并报告未处理数量。首次生成可能覆盖所有已发布文章，费用以服务商账单为准。`[seo] SUMMARY` 包含文章数、复用数、生成数、降级数、失败数、请求数与网关报告的 Token 用量，不输出秘密。
 
 ## 验证
 
 ```bash
 npm ci
 npm run test:seo
-npm run seo:check  # 仅生成本地摘录编译输入，不访问 API/Redis
+npm run seo:check  # 离线准备，不访问 AI/Redis
 npx tsc --noEmit
 npm run build
 ```
 
-本地 `npm run dev` 自动准备离线摘录，不花费 API 额度。正式构建可从 .env.local 加载凭据。手动执行 `node scripts/prepare-seo.mjs --check` 会在全量覆盖成功时再次从持久存储读取并比较结果；第二遍不允许调用模型。`--offline` 与 `--check` 是构建诊断参数，不覆盖全局在线配置。
+模型输入为标题、标签和最多 12000 字符的清理后正文，不含图片文件或代码块；格式检查不等于事实审校。上线时应抽查文案及真实 HTML 的 title、description、BlogPosting、canonical、日期和正文。
 
-上线前检查：实际 HTML 的 title、description、BlogPosting、canonical、日期和正文；在新的构建目录/清理构建缓存后验证原摘要逐字不变；模拟数据库故障验证构建停止。Preview 默认携带平台的 noindex，不将预览验证等同于生产部署。
+`node scripts/prepare-seo.mjs --check` 可在完整准备后再次读取并比较 Redis 中的记录，第二次读取禁止调用模型。清空构建缓存后仍应逐字复用原摘要。数据库不可用时构建应停止，不影响已经发布的页面摘要。
+
+Sitemap lastmod 与 BlogPosting dateModified 使用文章有效的 updatedOn/date，不使用摘要生成时间。结构化数据及 description 不保证收录、排名或某种搜索展示。
 
 参考：
 - https://vercel.com/docs/builds/configure-a-build
