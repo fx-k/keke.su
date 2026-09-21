@@ -7,7 +7,7 @@ import type { Metadata } from 'next'
 import config from 'config'
 
 export const metadata: Metadata = {
-  title: `文章归档｜${config.title}`,
+  title: '文章归档',
   description: `${config.title}的文章归档，按年份浏览全部已发布文章。`,
 }
 

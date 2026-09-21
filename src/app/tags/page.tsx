@@ -1,6 +1,11 @@
 import React from 'react'
 import { getLatestPosts } from '@/common/post'
 import TagsPage from './TagsPage'
+import type { Metadata } from 'next'
+
+export const metadata: Metadata = {
+  title: '标签',
+}
 
 async function getTags() {
   const posts = await getLatestPosts({ orderBy: 'asc' })

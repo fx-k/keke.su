@@ -2,6 +2,11 @@ import { getLatestPosts } from '@/common/post'
 import Profile from '@/components/Profile'
 import PostList from '@/components/PostList'
 import React from 'react'
+import type { Metadata } from 'next'
+
+export function generateMetadata({ params }: { params: { slug: string } }): Metadata {
+  return { title: decodeURIComponent(params.slug) }
+}
 
 export async function generateStaticParams() {
   const posts = await getLatestPosts()

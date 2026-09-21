@@ -26,7 +26,10 @@ const inter = Inter({
 })
 
 export const metadata: Metadata = {
-  title: config.title,
+  title: {
+    default: config.title,
+    template: `%s｜${config.title}`,
+  },
   description: config.description,
   metadataBase: getSiteUrl(),
   openGraph: {

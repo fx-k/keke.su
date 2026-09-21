@@ -20,7 +20,7 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: node --test scripts/seo.test.mjs
+      - run: node --test scripts/seo.test.mjs scripts/seo-title.test.mjs
       - name: Verify all published posts have descriptions (no API)
         run: node scripts/generate-seo-descriptions.mjs --dry-run
       - name: Type check
